@@ -1,0 +1,66 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: capytosaas-postgres
+    environment:
+      POSTGRES_DB: capytosaas
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d capytosaas"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: capytosaas-backend
+    env_file:
+      - backend/.env
+    environment:
+      # Internal DB URL for docker network
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/capytosaas
+      # External (Dokploy) URL example – override in Dokploy if needed
+      # INTERNET_DATABASE_URL: postgresql://postgres:postgres@capytosaasportal-mvp-3dcdfd:5432/capytosaas
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/health').read(); print('ok')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Build-time base URL so the static app knows where the API is
+        VITE_API_BASE: http://backend:8000
+    container_name: capytosaas-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    networks:
+      - appnet
+
+volumes:
+  pgdata:
+
+networks:
+  appnet:
+    driver: bridge

@@ -20,6 +20,13 @@ export default function CompanyPage() {
     refresh()
   }, [])
 
+  // Refresh when users are synced from header
+  useEffect(() => {
+    const onSynced = () => refresh()
+    window.addEventListener('users:synced', onSynced)
+    return () => window.removeEventListener('users:synced', onSynced)
+  }, [])
+
   useEffect(() => {
     getPrices(company.base_fiat).then(res => setPrices(res.prices))
   }, [company.base_fiat])
@@ -53,9 +60,16 @@ export default function CompanyPage() {
 
   const run = async () => {
     setRunning(true)
-    await runPayroll({ payroll_fiat_total: totalToConvert || payroll.total, crypto_symbol: payroll.symbol })
-    await refresh()
-    setRunning(false)
+    try {
+      await runPayroll({ payroll_fiat_total: totalToConvert || payroll.total, crypto_symbol: payroll.symbol })
+      await refresh()
+    } catch (e) {
+      console.error('Run payroll failed', e)
+      const msg = e?.response?.data?.detail || e?.message || 'Failed to run payroll'
+      alert(msg)
+    } finally {
+      setRunning(false)
+    }
   }
 
   const confirmFirstPending = async () => {

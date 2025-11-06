@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
+import { syncUsers } from './services/api.js'
 
 export default function App() {
   const [dark, setDark] = useState(() => {
@@ -44,6 +45,22 @@ export default function App() {
                 )}
               </NavLink>
             ))}
+            <button
+              aria-label="Sync users"
+              className="ml-2 btn btn-primary"
+              onClick={async () => {
+                try {
+                  const newUser = await syncUsers()
+                  // Broadcast a global event so pages can refresh
+                  window.dispatchEvent(new CustomEvent('users:synced', { detail: newUser }))
+                } catch (e) {
+                  console.error('Sync failed', e)
+                  alert('Failed to sync users')
+                }
+              }}
+            >
+              Sync users
+            </button>
             <button
               aria-label="Toggle dark mode"
               className="ml-2 btn btn-secondary"
