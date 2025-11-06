@@ -4,35 +4,14 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-# Database (PostgreSQL via SQLAlchemy Core)
-from sqlalchemy import (
-    create_engine,
-    MetaData,
-    Table,
-    Column,
-    String,
-    Integer,
-    Float,
-    Boolean,
-    DateTime,
-    JSON,
-    select,
-    insert,
-    update,
-    func,
-    text,
-)
-from sqlalchemy.engine import Engine
-from sqlalchemy.dialects.postgresql import JSONB
-
 load_dotenv()
 
-app = FastAPI(title="Crypto Payroll Mock API", version="0.2.0")
+app = FastAPI(title="Crypto Payroll Mock API", version="0.1.0")
 
 # CORS for local development
 app.add_middleware(
@@ -46,62 +25,59 @@ app.add_middleware(
 SUPPORTED_CRYPTOS = ["BTC", "ETH", "USDT", "USDC"]
 FIAT_CURRENCIES = ["USD", "CAD"]
 
-# ---------- PostgreSQL setup ----------
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is required for backend persistence")
+# In-memory stores (MVP) with simple JSON persistence
+EMPLOYEES: Dict[str, dict] = {}
+TRANSACTIONS: List[dict] = []
+COMPANY_SETTINGS: dict = {
+    "custody": False,  # False = pay to employee addresses; True = company custody
+    "company_wallets": {"BTC": "", "ETH": "", "USDT": "", "USDC": ""},
+    "base_fiat": "USD",
+}
 
-engine: Engine = create_engine(DATABASE_URL, future=True)
-metadata = MetaData()
-
-# Prefer JSONB on Postgres, fallback JSON otherwise
-JSON_TYPE = JSONB if DATABASE_URL.startswith("postgresql") else JSON
-
-employees_table = Table(
-    "employees",
-    metadata,
-    Column("user_id", String, primary_key=True),
-    Column("percent_to_crypto", Integer, nullable=False, default=0),
-    Column("receiving_addresses", JSON_TYPE, nullable=False, default={s: None for s in SUPPORTED_CRYPTOS}),
-    Column("crypto_split", JSON_TYPE, nullable=False, default={s: 0 for s in SUPPORTED_CRYPTOS}),
-    Column("first_name", String, nullable=True),
-    Column("last_name", String, nullable=True),
-    Column("address", String, nullable=True),
-    Column("accumulated_fiat", Float, nullable=False, default=0.0),
-    Column("accumulated_crypto", JSON_TYPE, nullable=False, default={s: 0.0 for s in SUPPORTED_CRYPTOS}),
-)
-
-transactions_table = Table(
-    "transactions",
-    metadata,
-    Column("id", String, primary_key=True),
-    Column("date", DateTime(timezone=True), nullable=False),
-    Column("fiat_amount", Float, nullable=False),
-    Column("fiat_currency", String, nullable=False),
-    Column("crypto_symbol", String, nullable=False),
-    Column("crypto_amount", Float, nullable=False),
-    Column("num_employees", Integer, nullable=False),
-    Column("addresses", JSON_TYPE, nullable=False),
-    Column("tx_hash", String, nullable=True),
-    Column("status", String, nullable=False, default="pending"),
-    Column("price_at_tx", Float, nullable=False),
-)
-
-company_settings_table = Table(
-    "company_settings",
-    metadata,
-    Column("id", Integer, primary_key=True),
-    Column("custody", Boolean, nullable=False, default=False),
-    Column("company_wallets", JSON_TYPE, nullable=False, default={s: "" for s in SUPPORTED_CRYPTOS}),
-    Column("base_fiat", String, nullable=False, default="USD"),
-)
-
-# Create tables if they don't exist
-with engine.begin() as conn:
-    metadata.create_all(conn)
+DB_DIR = os.path.dirname(os.path.abspath(__file__))
+EMPLOYEES_DB_PATH = os.path.join(DB_DIR, "employees.json")
 
 
-# ---------- Pydantic models ----------
+def load_employees_from_disk():
+    global EMPLOYEES
+    try:
+        if os.path.exists(EMPLOYEES_DB_PATH):
+            import json
+
+            with open(EMPLOYEES_DB_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # ensure mapping by user_id and normalize to Employee objects
+                loaded = {}
+                for item in data:
+                    uid = item.get("user_id")
+                    if not uid:
+                        continue
+                    try:
+                        loaded[uid] = Employee(**item)
+                    except Exception:
+                        # fallback to minimal record
+                        loaded[uid] = Employee(user_id=uid)
+                EMPLOYEES = loaded
+    except Exception:
+        # start fresh if corrupted
+        EMPLOYEES = {}
+
+
+def save_employees_to_disk():
+    try:
+        import json
+
+        with open(EMPLOYEES_DB_PATH, "w", encoding="utf-8") as f:
+            json.dump(list(EMPLOYEES.values()), f, indent=2, default=str)
+    except Exception:
+        # ignore persistence errors in MVP
+        pass
+
+
+# Load on startup
+load_employees_from_disk()
+
+
 class EmployeeIn(BaseModel):
     user_id: str
     percent_to_crypto: int = Field(0, ge=0, le=100)
@@ -149,41 +125,6 @@ class CompanySettings(BaseModel):
     base_fiat: str = "USD"
 
 
-# ---------- Helpers ----------
-def _row_to_employee(row) -> Employee:
-    return Employee(
-        user_id=row["user_id"],
-        percent_to_crypto=int(row["percent_to_crypto"] or 0),
-        receiving_addresses=row["receiving_addresses"] or {s: None for s in SUPPORTED_CRYPTOS},
-        crypto_split={s: int((row["crypto_split"] or {}).get(s, 0)) for s in SUPPORTED_CRYPTOS},
-        first_name=row.get("first_name"),
-        last_name=row.get("last_name"),
-        address=row.get("address"),
-        accumulated_fiat=float(row.get("accumulated_fiat") or 0.0),
-        accumulated_crypto={s: float((row.get("accumulated_crypto") or {}).get(s, 0.0)) for s in SUPPORTED_CRYPTOS},
-    )
-
-
-def _get_company_settings(conn) -> CompanySettings:
-    res = conn.execute(select(company_settings_table).where(company_settings_table.c.id == 1)).mappings().first()
-    if not res:
-        # initialize defaults
-        defaults = dict(
-            id=1,
-            custody=False,
-            company_wallets={s: "" for s in SUPPORTED_CRYPTOS},
-            base_fiat="USD",
-        )
-        conn.execute(insert(company_settings_table).values(**defaults))
-        conn.commit()
-        return CompanySettings(**{k: v for k, v in defaults.items() if k != "id"})
-    return CompanySettings(
-        custody=bool(res["custody"]),
-        company_wallets={s: (res["company_wallets"] or {}).get(s, "") for s in SUPPORTED_CRYPTOS},
-        base_fiat=res["base_fiat"] if res["base_fiat"] in FIAT_CURRENCIES else "USD",
-    )
-
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -196,39 +137,26 @@ def supported():
 
 @app.get("/company", response_model=CompanySettings)
 def get_company():
-    with engine.begin() as conn:
-        return _get_company_settings(conn)
+    return COMPANY_SETTINGS
 
 
 @app.put("/company", response_model=CompanySettings)
 def update_company(settings: CompanySettings):
     # sanitize wallets keys
     wallet_map = {s: settings.company_wallets.get(s) for s in SUPPORTED_CRYPTOS}
-    with engine.begin() as conn:
-        exists = conn.execute(select(func.count()).select_from(company_settings_table).where(company_settings_table.c.id == 1)).scalar()
-        payload = {
-            "custody": bool(settings.custody),
+    COMPANY_SETTINGS.update(
+        {
+            "custody": settings.custody,
             "company_wallets": wallet_map,
             "base_fiat": settings.base_fiat if settings.base_fiat in FIAT_CURRENCIES else "USD",
         }
-        if exists:
-            conn.execute(update(company_settings_table).where(company_settings_table.c.id == 1).values(**payload))
-        else:
-            conn.execute(insert(company_settings_table).values(id=1, **payload))
-        return _get_company_settings(conn)
+    )
+    return COMPANY_SETTINGS
 
 
 @app.get("/employees", response_model=List[Employee])
-def list_employees(response: "Response"):
-    # Instruct clients/proxies not to cache the employees list
-    try:
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-    except Exception:
-        pass
-    with engine.begin() as conn:
-        rows = conn.execute(select(employees_table).order_by(employees_table.c.user_id.asc())).mappings().all()
-        return [_row_to_employee(r) for r in rows]
+def list_employees():
+    return list(EMPLOYEES.values())
 
 
 @app.post("/employees", response_model=Employee)
@@ -239,52 +167,35 @@ def upsert_employee(payload: EmployeeIn):
         total = sum(int(payload.crypto_split.get(s, 0)) for s in provided_syms)
         if total != 100:
             raise HTTPException(status_code=400, detail="crypto_split for provided addresses must sum to 100")
-
-    with engine.begin() as conn:
-        row = conn.execute(select(employees_table).where(employees_table.c.user_id == payload.user_id)).mappings().first()
-        if row is None:
-            emp = Employee(**payload.model_dump())
-            conn.execute(
-                insert(employees_table).values(
-                    user_id=emp.user_id,
-                    percent_to_crypto=emp.percent_to_crypto,
-                    receiving_addresses=emp.receiving_addresses,
-                    crypto_split={s: int(emp.crypto_split.get(s, 0)) for s in SUPPORTED_CRYPTOS},
-                    first_name=emp.first_name,
-                    last_name=emp.last_name,
-                    address=emp.address,
-                    accumulated_fiat=0.0,
-                    accumulated_crypto={s: 0.0 for s in SUPPORTED_CRYPTOS},
-                )
-            )
-        else:
-            # update fields; preserve addresses if None provided
-            existing_addresses = row["receiving_addresses"] or {s: None for s in SUPPORTED_CRYPTOS}
-            new_addresses = existing_addresses.copy()
-            for sym, addr in (payload.receiving_addresses or {}).items():
-                if addr is not None:
-                    new_addresses[sym] = addr
-            conn.execute(
-                update(employees_table)
-                .where(employees_table.c.user_id == payload.user_id)
-                .values(
-                    percent_to_crypto=payload.percent_to_crypto,
-                    receiving_addresses=new_addresses,
-                    crypto_split={s: int(payload.crypto_split.get(s, 0)) for s in SUPPORTED_CRYPTOS},
-                    first_name=payload.first_name if payload.first_name is not None else row.get("first_name"),
-                    last_name=payload.last_name if payload.last_name is not None else row.get("last_name"),
-                    address=payload.address if payload.address is not None else row.get("address"),
-                )
-            )
-        out = conn.execute(select(employees_table).where(employees_table.c.user_id == payload.user_id)).mappings().first()
-        return _row_to_employee(out)
+    emp = EMPLOYEES.get(payload.user_id)
+    if emp is None:
+        emp = Employee(**payload.model_dump())
+    else:
+        # update fields
+        emp.percent_to_crypto = payload.percent_to_crypto
+        # keep existing addresses unless overwritten explicitly
+        for sym, addr in payload.receiving_addresses.items():
+            if addr is not None:
+                emp.receiving_addresses[sym] = addr
+        # update crypto split entirely
+        if payload.crypto_split is not None:
+            # ensure all symbols present
+            emp.crypto_split = {s: int(payload.crypto_split.get(s, 0)) for s in SUPPORTED_CRYPTOS}
+        # update optional metadata if provided
+        if payload.first_name is not None:
+            emp.first_name = payload.first_name
+        if payload.last_name is not None:
+            emp.last_name = payload.last_name
+        if payload.address is not None:
+            emp.address = payload.address
+    EMPLOYEES[payload.user_id] = emp
+    save_employees_to_disk()
+    return emp
 
 
 @app.get("/transactions", response_model=List[Transaction])
 def list_transactions():
-    with engine.begin() as conn:
-        rows = conn.execute(select(transactions_table).order_by(transactions_table.c.date.desc())).mappings().all()
-        return [Transaction(**dict(r)) for r in rows]
+    return TRANSACTIONS
 
 
 # ----- Payroll system sync (MVP random generator) -----
@@ -323,51 +234,37 @@ def random_quebec_address() -> str:
     return f"{num} {street}, {city}, QC, {pc}"
 
 
-def generate_unique_user_id(conn, first: str, last: str) -> str:
+def generate_unique_user_id(first: str, last: str) -> str:
     base = f"{first.lower()}.{last.lower()}"
     candidate = base
     i = 1
-    while True:
-        exists = conn.execute(select(func.count()).select_from(employees_table).where(employees_table.c.user_id == candidate)).scalar()
-        if not exists:
-            return candidate
+    while candidate in EMPLOYEES:
         i += 1
         candidate = f"{base}{i}"
+    return candidate
 
 
 @app.post("/sync", response_model=Employee)
 def sync_one_user():
     import random
-    with engine.begin() as conn:
-        first = random.choice(FIRST_NAMES)
-        last = random.choice(LAST_NAMES)
-        addr = random_quebec_address()
-        user_id = generate_unique_user_id(conn, first, last)
 
-        emp = Employee(
-            user_id=user_id,
-            percent_to_crypto=0,
-            receiving_addresses={s: "" for s in SUPPORTED_CRYPTOS},
-            crypto_split={s: 0 for s in SUPPORTED_CRYPTOS},
-            first_name=first,
-            last_name=last,
-            address=addr,
-        )
-        conn.execute(
-            insert(employees_table).values(
-                user_id=emp.user_id,
-                percent_to_crypto=emp.percent_to_crypto,
-                receiving_addresses=emp.receiving_addresses,
-                crypto_split=emp.crypto_split,
-                first_name=emp.first_name,
-                last_name=emp.last_name,
-                address=emp.address,
-                accumulated_fiat=0.0,
-                accumulated_crypto={s: 0.0 for s in SUPPORTED_CRYPTOS},
-            )
-        )
-        row = conn.execute(select(employees_table).where(employees_table.c.user_id == user_id)).mappings().first()
-        return _row_to_employee(row)
+    first = random.choice(FIRST_NAMES)
+    last = random.choice(LAST_NAMES)
+    addr = random_quebec_address()
+    user_id = generate_unique_user_id(first, last)
+
+    emp = Employee(
+        user_id=user_id,
+        percent_to_crypto=0,
+        receiving_addresses={s: "" for s in SUPPORTED_CRYPTOS},
+        crypto_split={s: 0 for s in SUPPORTED_CRYPTOS},
+        first_name=first,
+        last_name=last,
+        address=addr,
+    )
+    EMPLOYEES[user_id] = emp
+    save_employees_to_disk()
+    return emp
 
 
 @app.get("/prices")
@@ -383,87 +280,74 @@ async def run_payroll(req: RunPayrollRequest):
     if req.payroll_fiat_total <= 0:
         raise HTTPException(status_code=400, detail="payroll_fiat_total must be > 0")
 
-    with engine.begin() as conn:
-        settings = _get_company_settings(conn)
+    prices = await fetch_prices(COMPANY_SETTINGS.get("base_fiat", "USD"))
+    price = prices.get(req.crypto_symbol)
+    if not price:
+        raise HTTPException(status_code=502, detail="Price not available")
 
-        prices = await fetch_prices(settings.base_fiat)
-        price = prices.get(req.crypto_symbol)
-        if not price:
-            raise HTTPException(status_code=502, detail="Price not available")
+    crypto_amount = req.payroll_fiat_total / price
 
-        crypto_amount = req.payroll_fiat_total / price
+    # Determine addresses based on custody
+    addresses: List[str] = []
+    if COMPANY_SETTINGS.get("custody"):
+        wallet = COMPANY_SETTINGS.get("company_wallets", {}).get(req.crypto_symbol)
+        if not wallet:
+            raise HTTPException(status_code=400, detail="Company custody enabled but wallet missing")
+        # Single treasury address
+        addresses = [wallet]
+    else:
+        # Collect employee-provided addresses; if none, exclude that employee
+        addresses = [
+            emp.receiving_addresses.get(req.crypto_symbol)
+            for emp in EMPLOYEES.values()
+            if emp.percent_to_crypto > 0 and emp.receiving_addresses.get(req.crypto_symbol)
+        ]
+        if not addresses:
+            raise HTTPException(status_code=400, detail="No eligible employee addresses")
 
-        # Determine addresses based on custody
-        addresses: List[str] = []
-        if settings.custody:
-            wallet = (settings.company_wallets or {}).get(req.crypto_symbol)
-            if not wallet:
-                raise HTTPException(status_code=400, detail="Company custody enabled but wallet missing")
-            addresses = [wallet]
-        else:
-            rows = conn.execute(select(employees_table).mappings()).all()
-            addresses = [
-                (r["receiving_addresses"] or {}).get(req.crypto_symbol)
-                for r in rows
-                if int(r["percent_to_crypto"] or 0) > 0 and (r["receiving_addresses"] or {}).get(req.crypto_symbol)
-            ]
-            if not addresses:
-                raise HTTPException(status_code=400, detail="No eligible employee addresses")
+    # Mock call to third-party broker API
+    tx_hash = await mock_third_party_buy_and_distribute(
+        fiat_total=req.payroll_fiat_total,
+        crypto_symbol=req.crypto_symbol,
+        crypto_amount=crypto_amount,
+        addresses=addresses,
+    )
 
-        tx_id = str(uuid.uuid4())
-        # Mock call to third-party broker API
-        tx_hash = await mock_third_party_buy_and_distribute(
-            fiat_total=req.payroll_fiat_total,
-            crypto_symbol=req.crypto_symbol,
-            crypto_amount=crypto_amount,
-            addresses=addresses,
-        )
+    tx = Transaction(
+        id=str(uuid.uuid4()),
+        date=datetime.utcnow(),
+        fiat_amount=req.payroll_fiat_total,
+        fiat_currency=COMPANY_SETTINGS.get("base_fiat", "USD"),
+        crypto_symbol=req.crypto_symbol,
+        crypto_amount=crypto_amount,
+        num_employees=len(addresses) if not COMPANY_SETTINGS.get("custody") else len(EMPLOYEES),
+        addresses=addresses,
+        tx_hash=tx_hash,
+        status="pending",
+        price_at_tx=price,
+    )
+    TRANSACTIONS.insert(0, tx.model_dump())
 
-        conn.execute(
-            insert(transactions_table).values(
-                id=tx_id,
-                date=datetime.utcnow(),
-                fiat_amount=req.payroll_fiat_total,
-                fiat_currency=settings.base_fiat,
-                crypto_symbol=req.crypto_symbol,
-                crypto_amount=crypto_amount,
-                num_employees=len(addresses) if not settings.custody else conn.execute(select(func.count()).select_from(employees_table)).scalar(),
-                addresses=addresses,
-                tx_hash=tx_hash,
-                status="pending",
-                price_at_tx=price,
-            )
-        )
+    # Update simple accumulations for employees (very naive)
+    if not COMPANY_SETTINGS.get("custody"):
+        per_emp_share = crypto_amount / len(addresses)
+        for emp in EMPLOYEES.values():
+            addr = emp.receiving_addresses.get(req.crypto_symbol)
+            if emp.percent_to_crypto > 0 and addr in addresses:
+                emp.accumulated_crypto[req.crypto_symbol] += per_emp_share
+                # track fiat equivalent at time of tx for history
+                emp.accumulated_fiat += req.payroll_fiat_total / max(1, len(addresses))
 
-        # Update simple accumulations for employees (very naive)
-        if not settings.custody:
-            per_emp_share = crypto_amount / len(addresses)
-            rows = conn.execute(select(employees_table).mappings()).all()
-            for r in rows:
-                addr = (r["receiving_addresses"] or {}).get(req.crypto_symbol)
-                if int(r["percent_to_crypto"] or 0) > 0 and addr in addresses:
-                    acc_crypto = r.get("accumulated_crypto") or {s: 0.0 for s in SUPPORTED_CRYPTOS}
-                    acc_crypto[req.crypto_symbol] = float(acc_crypto.get(req.crypto_symbol, 0.0)) + per_emp_share
-                    acc_fiat = float(r.get("accumulated_fiat") or 0.0) + (req.payroll_fiat_total / max(1, len(addresses)))
-                    conn.execute(
-                        update(employees_table)
-                        .where(employees_table.c.user_id == r["user_id"])
-                        .values(accumulated_crypto=acc_crypto, accumulated_fiat=acc_fiat)
-                    )
-
-        row = conn.execute(select(transactions_table).where(transactions_table.c.id == tx_id)).mappings().first()
-        return Transaction(**dict(row))
+    return tx
 
 
 @app.post("/transactions/{tx_id}/confirm", response_model=Transaction)
 def confirm_transaction(tx_id: str):
-    with engine.begin() as conn:
-        res = conn.execute(select(transactions_table).where(transactions_table.c.id == tx_id)).mappings().first()
-        if not res:
-            raise HTTPException(status_code=404, detail="Transaction not found")
-        conn.execute(update(transactions_table).where(transactions_table.c.id == tx_id).values(status="confirmed"))
-        row = conn.execute(select(transactions_table).where(transactions_table.c.id == tx_id)).mappings().first()
-        return Transaction(**dict(row))
+    for t in TRANSACTIONS:
+        if t["id"] == tx_id:
+            t["status"] = "confirmed"
+            return t
+    raise HTTPException(status_code=404, detail="Transaction not found")
 
 
 async def fetch_prices(fiat: str = "USD") -> Dict[str, float]:

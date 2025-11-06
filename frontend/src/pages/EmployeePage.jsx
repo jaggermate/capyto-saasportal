@@ -91,7 +91,6 @@ export default function EmployeePage() {
   const [addrValid, setAddrValid] = useState(true)
   const [mode, setMode] = useState('existing') // 'existing' | 'new'
   const [newUserId, setNewUserId] = useState('')
-  const [loadingEmployees, setLoadingEmployees] = useState(true)
 
   const employee = useMemo(() => employees.find(e => e.user_id === userId), [employees, userId])
 
@@ -99,10 +98,8 @@ export default function EmployeePage() {
     getSupported().then(setSupported)
   }, [])
 
-  const fetchEmployees = async () => {
-    setLoadingEmployees(true)
-    try {
-      const list = await listEmployees()
+  useEffect(() => {
+    listEmployees().then(list => {
       setEmployees(list)
       if (list.length === 0) {
         setMode('new')
@@ -110,27 +107,9 @@ export default function EmployeePage() {
         setUserId(list[0].user_id)
         setMode('existing')
       }
-    } finally {
-      setLoadingEmployees(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchEmployees()
+    })
     getPrices(fiat).then(res => setPrices(res.prices))
   }, [fiat])
-
-  // Refetch on window focus/visibility to avoid stale state when navigating back
-  useEffect(() => {
-    const onFocus = () => fetchEmployees()
-    const onVis = () => { if (document.visibilityState === 'visible') fetchEmployees() }
-    window.addEventListener('focus', onFocus)
-    document.addEventListener('visibilitychange', onVis)
-    return () => {
-      window.removeEventListener('focus', onFocus)
-      document.removeEventListener('visibilitychange', onVis)
-    }
-  }, [])
 
   // Listen for global sync event to refresh employees and select the new one
   useEffect(() => {
@@ -208,9 +187,8 @@ export default function EmployeePage() {
                   }
                 }}
               >
-                {loadingEmployees && <option value="" disabled>Loading employees…</option>}
-                {!loadingEmployees && employees.length === 0 && <option value="" disabled>No employees yet</option>}
-                {!loadingEmployees && employees.map(e => (
+                {employees.length === 0 && <option value="">No employees yet</option>}
+                {employees.map(e => (
                   <option key={e.user_id} value={e.user_id}>{e.user_id}</option>
                 ))}
                 <option value="__new__">+ Create new user…</option>

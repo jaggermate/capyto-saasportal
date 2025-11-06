@@ -72,7 +72,7 @@ Prerequisites
   VITE_API_BASE=http://localhost:8000
 
 Notes on behavior
-- Persistence: The backend now stores data in PostgreSQL (DATABASE_URL). Data survives backend restarts and container redeploys.
+- Storage is in-memory only for this MVP; restarting the backend will wipe data
 - Payroll calculation is intentionally naive for demo purposes
 - If custody is enabled, the company wallet address for the selected crypto is required to run payroll
 - If custody is disabled, only employees with a non-empty address and a non-zero percent are included in the payroll run
@@ -98,48 +98,3 @@ Future integration
 
 License
 - For demo purposes only.
-
-
----
-
-Docker Compose deployment
-
-Prerequisites
-- Docker 20.10+
-- Docker Compose v2
-
-Services included
-- db: PostgreSQL 16 (database: capytosaas, user: postgres, password: postgres)
-- backend: FastAPI API (exposed at http://localhost:8000)
-- frontend: Static React app served by Nginx (exposed at http://localhost:5173)
-
-Quick start
-1) Build and start the stack
-   docker compose up -d --build
-
-2) Open the app
-   http://localhost:5173
-
-Configuration
-- Backend reads environment variables from backend/.env (included). The compose file also injects:
-  - DATABASE_URL=postgresql://postgres:postgres@db:5432/capytosaas
-
-- For Dokploy or external managed Postgres, use the provided internet connection URL and set it as DATABASE_URL:
-  postgresql://postgres:postgres@capytosaasportal-mvp-3dcdfd:5432/capytosaas
-
-  You can set this in Dokploy environment for the backend service so it overrides the compose default.
-
-Frontend API base
-- The frontend image is built with VITE_API_BASE=http://backend:8000 so it talks to the backend service on the Docker network.
-- If you deploy frontend separately, set VITE_API_BASE to your public backend URL at build time:
-  docker build --build-arg VITE_API_BASE=https://api.example.com -t capytosaas-frontend ./
-
-Health checks
-- Postgres: pg_isready
-- Backend: GET /health
-
-Data persistence
-- PostgreSQL data is stored in a named volume pgdata.
-
-Notes
-- The current MVP still uses JSON file storage for employees, but the stack is prepared with PostgreSQL and DATABASE_URL for a future migration.
