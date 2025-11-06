@@ -15,6 +15,6 @@ COPY frontend/ .
 ARG VITE_API_BASE=http://localhost:8000
 ENV VITE_API_BASE=${VITE_API_BASE}
 
-RUN npm run dev
+RUN npm run dev --host 0.0.0.0
 
 EXPOSE 5173
