@@ -2,13 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react'
 import Slider from '../components/Slider.jsx'
 import AddressForm from '../components/AddressForm.jsx'
 import MetricCard from '../components/MetricCard.jsx'
-import { getPrices, listEmployees, upsertEmployee, getSupported } from '../services/api.js'
+import { getPrices, listEmployees, upsertEmployee, getSupported, listTransactions } from '../services/api.js'
 
-function LastPayday({ fiat, prices, percent, split }) {
+function LastPayday({ fiat, prices, percent, split, convertMode='percent', fixedAmount=0 }) {
   // MVP assumptions for last payday values
   const gross = 5000
   const net = 4000
-  const toCrypto = (net * (percent || 0)) / 100
+  const toCrypto = convertMode === 'fixed' ? Number(fixedAmount || 0) : (net * (percent || 0)) / 100
   const hasSplit = split && Object.values(split).some(v => Number(v) > 0)
   const entries = Object.entries(split || {}).filter(([, pct]) => Number(pct) > 0)
   return (
@@ -24,14 +24,14 @@ function LastPayday({ fiat, prices, percent, split }) {
           <div className="font-semibold">{net.toFixed(2)} {fiat}</div>
         </div>
         <div>
-          <div className="text-gray-500">To convert ({percent || 0}%)</div>
+          <div className="text-gray-500">To convert {convertMode === 'fixed' ? '' : `(${percent || 0}%)`}</div>
           <div className="font-semibold">{toCrypto.toFixed(2)} {fiat}</div>
         </div>
       </div>
       <div className="mt-3">
         <div className="text-sm text-gray-600 dark:text-slate-300 mb-1">Breakdown by crypto (with current rate)</div>
         {(!hasSplit || toCrypto <= 0) ? (
-          <div className="text-xs text-gray-500">No split configured or 0% to crypto.</div>
+          <div className="text-xs text-gray-500">No split configured or nothing to convert.</div>
         ) : (
           <div className="space-y-1">
             {entries.map(([sym, pct]) => {
@@ -81,6 +81,8 @@ function UserInfoCard({ employee }) {
 export default function EmployeePage() {
   const [userId, setUserId] = useState('')
   const [percent, setPercent] = useState(0)
+  const [convertMode, setConvertMode] = useState('percent') // 'percent' | 'fixed'
+  const [fixedAmount, setFixedAmount] = useState(0)
   const [addresses, setAddresses] = useState({})
   const [cryptoSplit, setCryptoSplit] = useState({})
   const [employees, setEmployees] = useState([])
@@ -91,6 +93,7 @@ export default function EmployeePage() {
   const [addrValid, setAddrValid] = useState(true)
   const [mode, setMode] = useState('existing') // 'existing' | 'new'
   const [newUserId, setNewUserId] = useState('')
+  const [txs, setTxs] = useState([])
 
   const employee = useMemo(() => employees.find(e => e.user_id === userId), [employees, userId])
 
@@ -109,6 +112,7 @@ export default function EmployeePage() {
       }
     })
     getPrices(fiat).then(res => setPrices(res.prices))
+    listTransactions().then(setTxs)
   }, [fiat])
 
   // Listen for global sync event to refresh employees and select the new one
@@ -130,6 +134,8 @@ export default function EmployeePage() {
   useEffect(() => {
     if (employee) {
       setPercent(employee.percent_to_crypto)
+      setConvertMode(employee.convert_mode || 'percent')
+      setFixedAmount(Number(employee.fixed_amount_fiat || 0))
       setAddresses(employee.receiving_addresses)
       setCryptoSplit(employee.crypto_split || {})
       // assume existing addresses in backend are valid and saved
@@ -138,6 +144,8 @@ export default function EmployeePage() {
     } else {
       // creating a new user or a non-existing one
       setPercent(0)
+      setConvertMode('percent')
+      setFixedAmount(0)
       setAddresses({})
       setCryptoSplit({})
       setAddressesSaved(false)
@@ -149,6 +157,8 @@ export default function EmployeePage() {
     const payload = {
       user_id: userId,
       percent_to_crypto: percent,
+      convert_mode: convertMode,
+      fixed_amount_fiat: Number(fixedAmount || 0),
       receiving_addresses: addresses,
       crypto_split: cryptoSplit,
     }
@@ -163,6 +173,55 @@ export default function EmployeePage() {
 
   const btcBalance = employee?.accumulated_crypto?.BTC || 0
   const btcPrice = prices?.BTC || 0
+
+  // Derive transactions assigned to this employee
+  const assignedTxs = useMemo(() => {
+    if (!employee) return []
+    const out = []
+    for (const t of txs) {
+      const sym = t.crypto_symbol
+      const addr = employee?.receiving_addresses?.[sym]
+      if (!addr) continue
+      if (!Array.isArray(t.addresses) || t.addresses.length === 0) continue
+      if (!t.addresses.includes(addr)) continue
+      const perShare = t.crypto_amount / t.addresses.length
+      const valueAtTx = perShare * (t.price_at_tx || 0)
+      const currentRate = prices?.[sym] || 0
+      const currentValue = perShare * currentRate
+      out.push({
+        id: t.id,
+        date: t.date,
+        status: t.status,
+        tx_hash: t.tx_hash,
+        fiat_currency: t.fiat_currency,
+        crypto_symbol: sym,
+        crypto_amount: perShare,
+        price_at_tx: t.price_at_tx,
+        value_at_tx: valueAtTx,
+        current_value: currentValue,
+      })
+    }
+    return out
+  }, [employee?.user_id, employee?.receiving_addresses, txs, prices])
+
+  // Compute average acquisition cost for BTC from assigned transactions
+  const { btcAvgCost, btcAvgFiat } = useMemo(() => {
+    const btcTxs = assignedTxs.filter(t => t.crypto_symbol === 'BTC')
+    const totals = btcTxs.reduce((acc, t) => {
+      acc.crypto += (t.crypto_amount || 0)
+      acc.fiat += (t.value_at_tx || 0)
+      acc.fiatCurrency = t.fiat_currency || acc.fiatCurrency
+      return acc
+    }, { crypto: 0, fiat: 0, fiatCurrency: fiat })
+    const avg = totals.crypto > 0 ? (totals.fiat / totals.crypto) : 0
+    return { btcAvgCost: avg, btcAvgFiat: totals.fiatCurrency }
+  }, [assignedTxs, fiat])
+
+  const btcSub = useMemo(() => {
+    const currentVal = (btcBalance * btcPrice).toFixed(2)
+    const avgText = btcAvgCost > 0 ? ` • Avg cost: ${btcAvgCost.toFixed(2)} ${btcAvgFiat}/BTC` : ''
+    return `≈ ${currentVal} ${fiat}${avgText}`
+  }, [btcBalance, btcPrice, fiat, btcAvgCost, btcAvgFiat])
 
   const saveDisabled = !addressesSaved || !addrValid || !userId
 
@@ -223,16 +282,43 @@ export default function EmployeePage() {
       <div className="grid md:grid-cols-3 gap-4">
         <div className="md:col-span-2 card p-4">
           <div className="title mb-2">Choose how much of each paycheck goes to crypto</div>
-          <Slider value={percent} onChange={setPercent} />
-          <div className="text-sm text-gray-600 mt-2">This percentage will be converted and sent to your selected crypto address(es).</div>
+
+          <div className="flex items-center gap-4 mb-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="radio" name="convert-mode" value="percent" checked={convertMode==='percent'} onChange={()=>setConvertMode('percent')} />
+              <span>Percent of net pay</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="radio" name="convert-mode" value="fixed" checked={convertMode==='fixed'} onChange={()=>setConvertMode('fixed')} />
+              <span>Fixed amount per pay ({fiat})</span>
+            </label>
+          </div>
+
+          {convertMode === 'percent' ? (
+            <>
+              <Slider value={percent} onChange={setPercent} />
+              <div className="text-sm text-gray-600 mt-2">This percentage will be converted and sent to your selected crypto address(es).</div>
+            </>
+          ) : (
+            <div className="flex items-end gap-3">
+              <div>
+                <div className="label">Amount to convert each pay</div>
+                <input type="number" min="0" step="0.01" className="input" value={fixedAmount}
+                       onChange={e=> setFixedAmount(e.target.value)} placeholder={`0.00 ${fiat}`} />
+              </div>
+            </div>
+          )}
+
           <LastPayday
             fiat={fiat}
             prices={prices}
             percent={percent}
             split={cryptoSplit}
+            convertMode={convertMode}
+            fixedAmount={fixedAmount}
           />
         </div>
-        <MetricCard label={`Accumulated BTC`} value={`${btcBalance.toFixed(6)} BTC`} sub={`≈ ${(btcBalance * btcPrice).toFixed(2)} ${fiat}`} />
+        <MetricCard label={`Accumulated BTC`} value={`${btcBalance.toFixed(6)} BTC`} sub={btcSub} />
       </div>
 
       <div className="card p-4">
@@ -251,6 +337,42 @@ export default function EmployeePage() {
       </div>
 
       <div className="text-xs text-gray-500">Note: Company doesn’t custody funds if your crypto address is provided.</div>
+
+      <div className="card p-4">
+        <div className="title mb-2">Your crypto transactions</div>
+        <div className="text-sm text-gray-600 mb-3">Shows your share per payroll: amount received, value at the moment of payout, and current value.</div>
+        <div className="overflow-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Asset</th>
+                <th>Amount</th>
+                <th>Value at payout</th>
+                <th>Current value</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {assignedTxs.map((t) => (
+                <tr key={t.id}>
+                  <td>{new Date(t.date).toLocaleString()}</td>
+                  <td>{t.crypto_symbol}</td>
+                  <td>{t.crypto_amount.toFixed(6)} {t.crypto_symbol}</td>
+                  <td>{t.value_at_tx.toFixed(2)} {t.fiat_currency} @ {t.price_at_tx.toFixed(2)}</td>
+                  <td>{t.current_value.toFixed(2)} {t.fiat_currency}</td>
+                  <td className="text-xs"><span className={`badge ${t.status==='confirmed'?'badge-green':'badge-yellow'}`}>{t.status}</span></td>
+                </tr>
+              ))}
+              {assignedTxs.length === 0 && (
+                <tr>
+                  <td className="px-4 py-8 text-center text-sm text-gray-500" colSpan={6}>No transactions for this user yet</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }
