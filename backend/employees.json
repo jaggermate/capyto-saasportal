@@ -1,4 +1,92 @@
 [
-  "user_id='chlo\u00e9.lavoie' percent_to_crypto=19 convert_mode='percent' fixed_amount_fiat=0.0 receiving_addresses={'BTC': 'bc1qne8jl8tax33ff4heq4j7t0uvxxuexv0sxkl78p', 'ETH': '', 'USDT': '', 'USDC': ''} crypto_split={'BTC': 100, 'ETH': 0, 'USDT': 0, 'USDC': 0} first_name='Chlo\u00e9' last_name='Lavoie' address='3232 Rue Sainte-Catherine, Longueuil, QC, K2H 8L4' accumulated_fiat=474.99999999999994 accumulated_crypto={'BTC': 0.004671691267724166, 'ETH': 0.0, 'USDT': 0.0, 'USDC': 0.0}",
-  "user_id='l\u00e9a.lavoie' percent_to_crypto=0 convert_mode='fixed' fixed_amount_fiat=225.0 receiving_addresses={'BTC': 'bc1qne8jl8tax33ff4heq4j7t0uvxxuexv0sxkl78p', 'ETH': '', 'USDT': '', 'USDC': ''} crypto_split={'BTC': 100, 'ETH': 0, 'USDT': 0, 'USDC': 0} first_name='L\u00e9a' last_name='Lavoie' address='255 Boulevard Ren\u00e9-L\u00e9vesque, Gatineau, QC, L5P 4G7' accumulated_fiat=474.99999999999994 accumulated_crypto={'BTC': 0.004671691267724166, 'ETH': 0.0, 'USDT': 0.0, 'USDC': 0.0}"
+  {
+    "user_id": "david.c\u00f4t\u00e9",
+    "percent_to_crypto": 31,
+    "convert_mode": "percent",
+    "fixed_amount_fiat": 0.0,
+    "gross_salary": 2045.25,
+    "net_salary": 1707.11,
+    "receiving_addresses": {
+      "BTC": "15eZC1TbxGoipspSrUC4f7JqFXBSe2bEBK",
+      "ETH": null,
+      "USDT": null,
+      "USDC": null
+    },
+    "crypto_split": {
+      "BTC": 100,
+      "ETH": 0,
+      "USDT": 0,
+      "USDC": 0
+    },
+    "first_name": "David",
+    "last_name": "C\u00f4t\u00e9",
+    "address": "3681 Rue Sainte-Catherine, Sherbrooke, QC, H3H 8Y3",
+    "accumulated_fiat": 529.2,
+    "accumulated_crypto": {
+      "BTC": 0.005282108186,
+      "ETH": 0.0,
+      "USDT": 0.0,
+      "USDC": 0.0
+    }
+  },
+  {
+    "user_id": "thomas.morin",
+    "percent_to_crypto": 0,
+    "convert_mode": "fixed",
+    "fixed_amount_fiat": 250.0,
+    "gross_salary": 1898.4,
+    "net_salary": 1563.74,
+    "receiving_addresses": {
+      "BTC": "15eZC1TbxGoipspSrUC4f7JqFXBSe2bEBK",
+      "ETH": null,
+      "USDT": null,
+      "USDC": null
+    },
+    "crypto_split": {
+      "BTC": 100,
+      "ETH": 0,
+      "USDT": 0,
+      "USDC": 0
+    },
+    "first_name": "Thomas",
+    "last_name": "Morin",
+    "address": "6556 Chemin Sainte-Foy, Terrebonne, QC, V7Y 9L3",
+    "accumulated_fiat": 250.0,
+    "accumulated_crypto": {
+      "BTC": 0.002495326997,
+      "ETH": 0.0,
+      "USDT": 0.0,
+      "USDC": 0.0
+    }
+  },
+  {
+    "user_id": "lucas.fortin",
+    "percent_to_crypto": 0,
+    "convert_mode": "percent",
+    "fixed_amount_fiat": 0.0,
+    "gross_salary": 2021.84,
+    "net_salary": 1654.77,
+    "receiving_addresses": {
+      "BTC": null,
+      "ETH": null,
+      "USDT": null,
+      "USDC": null
+    },
+    "crypto_split": {
+      "BTC": 0,
+      "ETH": 0,
+      "USDT": 0,
+      "USDC": 0
+    },
+    "first_name": "Lucas",
+    "last_name": "Fortin",
+    "address": "1622 Chemin Sainte-Foy, Montr\u00e9al, QC, A1C 8A8",
+    "accumulated_fiat": 0.0,
+    "accumulated_crypto": {
+      "BTC": 0.0,
+      "ETH": 0.0,
+      "USDT": 0.0,
+      "USDC": 0.0
+    }
+  }
 ]

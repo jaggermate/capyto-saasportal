@@ -4,11 +4,22 @@ import AddressForm from '../components/AddressForm.jsx'
 import MetricCard from '../components/MetricCard.jsx'
 import { getPrices, listEmployees, upsertEmployee, getSupported, listTransactions } from '../services/api.js'
 
-function LastPayday({ fiat, prices, percent, split, convertMode='percent', fixedAmount=0 }) {
-  // MVP assumptions for last payday values
-  const gross = 5000
-  const net = 4000
-  const toCrypto = convertMode === 'fixed' ? Number(fixedAmount || 0) : (net * (percent || 0)) / 100
+function resolveNetSalary(employee) {
+  const net = Number(employee?.net_salary || 0)
+  if (net > 0) return net
+  const gross = Number(employee?.gross_salary || 0)
+  if (gross > 0) {
+    return Number((gross * 0.82).toFixed(2))
+  }
+  return 0
+}
+
+function LastPayday({ employee, fiat, prices, percent, split, convertMode='percent', fixedAmount=0 }) {
+  const gross = Number(employee?.gross_salary || 0)
+  const net = resolveNetSalary(employee)
+  const pct = Number(percent || 0)
+  const baseToConvert = convertMode === 'fixed' ? Number(fixedAmount || 0) : (net * pct) / 100
+  const toCrypto = baseToConvert > 0 ? baseToConvert : 0
   const hasSplit = split && Object.values(split).some(v => Number(v) > 0)
   const entries = Object.entries(split || {}).filter(([, pct]) => Number(pct) > 0)
   return (
@@ -17,11 +28,11 @@ function LastPayday({ fiat, prices, percent, split, convertMode='percent', fixed
       <div className="text-sm grid md:grid-cols-3 gap-3">
         <div>
           <div className="text-gray-500">Gross</div>
-          <div className="font-semibold">{gross.toFixed(2)} {fiat}</div>
+          <div className="font-semibold">{gross > 0 ? `${gross.toFixed(2)} ${fiat}` : '—'}</div>
         </div>
         <div>
           <div className="text-gray-500">Net</div>
-          <div className="font-semibold">{net.toFixed(2)} {fiat}</div>
+          <div className="font-semibold">{net > 0 ? `${net.toFixed(2)} ${fiat}` : '—'}</div>
         </div>
         <div>
           <div className="text-gray-500">To convert {convertMode === 'fixed' ? '' : `(${percent || 0}%)`}</div>
@@ -52,15 +63,18 @@ function LastPayday({ fiat, prices, percent, split, convertMode='percent', fixed
   )
 }
 
-function UserInfoCard({ employee }) {
+function UserInfoCard({ employee, fiat='USD' }) {
   if (!employee) return null
   const name = [employee.first_name, employee.last_name].filter(Boolean).join(' ').trim()
   const displayName = name || employee.user_id
   const address = employee.address || 'No address on file'
+  const gross = Number(employee?.gross_salary || 0)
+  const net = resolveNetSalary(employee)
+  const salaryDisplay = (value) => value > 0 ? `${value.toFixed(2)} ${fiat}` : 'Not provided'
   return (
     <div className="card p-4">
       <div className="title mb-2">User info</div>
-      <div className="grid md:grid-cols-3 gap-3 text-sm">
+      <div className="grid md:grid-cols-4 gap-3 text-sm">
         <div>
           <div className="text-gray-500">Name</div>
           <div className="font-semibold">{displayName}</div>
@@ -69,7 +83,15 @@ function UserInfoCard({ employee }) {
           <div className="text-gray-500">User ID</div>
           <div className="font-mono text-xs md:text-sm break-all">{employee.user_id}</div>
         </div>
-        <div className="md:col-span-1">
+        <div>
+          <div className="text-gray-500">Gross salary (per pay)</div>
+          <div className="font-semibold">{salaryDisplay(gross)}</div>
+        </div>
+        <div>
+          <div className="text-gray-500">Net salary (per pay)</div>
+          <div className="font-semibold">{salaryDisplay(net)}</div>
+        </div>
+        <div className="md:col-span-4">
           <div className="text-gray-500">Address</div>
           <div className="text-sm">{address}</div>
         </div>
@@ -180,6 +202,26 @@ export default function EmployeePage() {
     const out = []
     for (const t of txs) {
       const sym = t.crypto_symbol
+      const breakdown = Array.isArray(t.per_employee_breakdown) ? t.per_employee_breakdown : []
+      const match = breakdown.find(item => item.user_id === employee.user_id)
+      if (match) {
+        const cryptoAmt = Number(match.crypto_amount || 0)
+        const fiatAmt = Number(match.fiat_amount || 0)
+        const currentRate = prices?.[sym] || 0
+        out.push({
+          id: t.id,
+          date: t.date,
+          status: t.status,
+          tx_hash: t.tx_hash,
+          fiat_currency: t.fiat_currency,
+          crypto_symbol: sym,
+          crypto_amount: cryptoAmt,
+          price_at_tx: t.price_at_tx,
+          value_at_tx: fiatAmt,
+          current_value: cryptoAmt * currentRate,
+        })
+        continue
+      }
       const addr = employee?.receiving_addresses?.[sym]
       if (!addr) continue
       if (!Array.isArray(t.addresses) || t.addresses.length === 0) continue
@@ -277,7 +319,7 @@ export default function EmployeePage() {
       </div>
 
       {/* User info card shown above the crypto percentage selector */}
-      <UserInfoCard employee={employee} />
+      <UserInfoCard employee={employee} fiat={fiat} />
 
       <div className="grid md:grid-cols-3 gap-4">
         <div className="md:col-span-2 card p-4">
@@ -310,6 +352,7 @@ export default function EmployeePage() {
           )}
 
           <LastPayday
+            employee={employee}
             fiat={fiat}
             prices={prices}
             percent={percent}

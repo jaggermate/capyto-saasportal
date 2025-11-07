@@ -96,6 +96,8 @@ class EmployeeIn(BaseModel):
     # New: allow choosing conversion mode per employee
     convert_mode: Literal['percent', 'fixed'] = 'percent'
     fixed_amount_fiat: float = Field(0.0, ge=0)
+    gross_salary: float = Field(0.0, ge=0)
+    net_salary: float = Field(0.0, ge=0)
     receiving_addresses: Dict[str, Optional[str]] = Field(
         default_factory=lambda: {s: None for s in SUPPORTED_CRYPTOS}
     )
@@ -129,6 +131,40 @@ def _employee_fixed_amount(emp: "Employee") -> float:
         return 0.0
 
 
+def _employee_gross_salary(emp: "Employee") -> float:
+    try:
+        return float(getattr(emp, "gross_salary", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _employee_net_salary(emp: "Employee") -> float:
+    try:
+        net = float(getattr(emp, "net_salary", 0.0) or 0.0)
+    except Exception:
+        net = 0.0
+    if net > 0:
+        return net
+    gross = _employee_gross_salary(emp)
+    if gross > 0:
+        # If net is missing, fall back to a conservative 82% of gross
+        return round(gross * 0.82, 2)
+    return 0.0
+
+
+def _employee_percent_amount(emp: "Employee") -> float:
+    try:
+        pct = float(getattr(emp, "percent_to_crypto", 0) or 0)
+    except Exception:
+        pct = 0.0
+    if pct <= 0:
+        return 0.0
+    net = _employee_net_salary(emp)
+    if net <= 0:
+        return 0.0
+    return round(net * (pct / 100.0), 8)
+
+
 def employee_requested_fiat_for_symbol(emp: "Employee", symbol: str) -> float:
     """Return the employee requested fiat amount for the given crypto symbol."""
 
@@ -138,19 +174,12 @@ def employee_requested_fiat_for_symbol(emp: "Employee", symbol: str) -> float:
 
     mode = getattr(emp, "convert_mode", "percent") or "percent"
     if mode == "fixed":
-        return round(_employee_fixed_amount(emp) * (split_pct / 100.0), 8)
-    # Percent mode would require base salary data which the backend does not yet model
-    return 0.0
-
-
-def employee_is_eligible_for_symbol(emp: "Employee", symbol: str) -> bool:
-    split_pct = _crypto_split(emp, symbol)
-    if split_pct <= 0:
-        return False
-    mode = getattr(emp, "convert_mode", "percent") or "percent"
-    if mode == "fixed":
-        return _employee_fixed_amount(emp) > 0
-    return int(getattr(emp, "percent_to_crypto", 0) or 0) > 0
+        base = _employee_fixed_amount(emp)
+    else:
+        base = _employee_percent_amount(emp)
+    if base <= 0:
+        return 0.0
+    return round(base * (split_pct / 100.0), 8)
 
 
 def normalize_addresses(addresses: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
@@ -331,12 +360,16 @@ def sync_one_user():
     last = random.choice(LAST_NAMES)
     addr = random_quebec_address()
     user_id = generate_unique_user_id(first, last)
+    gross = round(random.uniform(1750, 2250), 2)
+    net = round(gross * random.uniform(0.80, 0.85), 2)
 
     emp = Employee(
         user_id=user_id,
         percent_to_crypto=0,
         convert_mode='percent',
         fixed_amount_fiat=0.0,
+        gross_salary=gross,
+        net_salary=net,
         first_name=first,
         last_name=last,
         address=addr,
@@ -364,50 +397,48 @@ async def run_payroll(req: RunPayrollRequest):
 
     custody_mode = bool(COMPANY_SETTINGS.get("custody"))
 
-    per_employee_breakdown: List[dict] = []
-    addresses: List[str] = []
-    eligible_with_addresses: List[Employee] = []
-
     if custody_mode:
         wallet = COMPANY_SETTINGS.get("company_wallets", {}).get(req.crypto_symbol)
         if not wallet:
             raise HTTPException(status_code=400, detail="Company custody enabled but wallet missing")
-        # Build breakdown based on employee tab
-        computed_fiat_total = 0.0
-        for emp in EMPLOYEES.values():
-            fiat_amt = employee_requested_fiat_for_symbol(emp, req.crypto_symbol)
-            if fiat_amt > 0:
-                per_employee_breakdown.append({
-                    "user_id": emp.user_id,
-                    "fiat_amount": fiat_amt,
-                    "crypto_amount": round(fiat_amt / price, 12),
-                })
-                computed_fiat_total += fiat_amt
-        if computed_fiat_total <= 0:
-            raise HTTPException(status_code=400, detail="No employee requests found for this crypto in custody mode")
-        payroll_fiat_total = round(computed_fiat_total, 2)
-        crypto_amount = payroll_fiat_total / price
+
+    per_employee_breakdown: List[dict] = []
+    for emp in EMPLOYEES.values():
+        fiat_amt = employee_requested_fiat_for_symbol(emp, req.crypto_symbol)
+        if fiat_amt <= 0:
+            continue
+        entry = {
+            "user_id": emp.user_id,
+            "fiat_amount": round(fiat_amt, 2),
+        }
+        if not custody_mode:
+            addr = emp.receiving_addresses.get(req.crypto_symbol)
+            if not addr:
+                continue
+            entry["address"] = addr
+        per_employee_breakdown.append(entry)
+
+    if not per_employee_breakdown:
+        detail = "No employee requests found for this crypto"
+        if not custody_mode:
+            detail = "No eligible employee requests with valid addresses"
+        raise HTTPException(status_code=400, detail=detail)
+
+    payroll_fiat_total = round(sum(item["fiat_amount"] for item in per_employee_breakdown), 2)
+    if payroll_fiat_total <= 0:
+        detail = "No employee requests found for this crypto"
+        if not custody_mode:
+            detail = "No eligible employee requests with valid addresses"
+        raise HTTPException(status_code=400, detail=detail)
+
+    for item in per_employee_breakdown:
+        item["crypto_amount"] = round(item["fiat_amount"] / price, 12)
+
+    crypto_amount = payroll_fiat_total / price
+    if custody_mode:
         addresses = [wallet]
     else:
-        # Non-custody: original behavior with provided total and eligible addresses
-        if req.payroll_fiat_total <= 0:
-            raise HTTPException(status_code=400, detail="payroll_fiat_total must be > 0")
-        payroll_fiat_total = req.payroll_fiat_total
-        crypto_amount = payroll_fiat_total / price
-        eligible_employees: List[Employee] = [
-            emp
-            for emp in EMPLOYEES.values()
-            if employee_is_eligible_for_symbol(emp, req.crypto_symbol)
-        ]
-        eligible_with_addresses = [
-            emp
-            for emp in eligible_employees
-            if emp.receiving_addresses.get(req.crypto_symbol)
-        ]
-        addresses = [
-            emp.receiving_addresses.get(req.crypto_symbol)
-            for emp in eligible_with_addresses
-        ]
+        addresses = [item["address"] for item in per_employee_breakdown]
         if not addresses:
             raise HTTPException(status_code=400, detail="No eligible employee addresses")
 
@@ -426,7 +457,7 @@ async def run_payroll(req: RunPayrollRequest):
         fiat_currency=COMPANY_SETTINGS.get("base_fiat", "USD"),
         crypto_symbol=req.crypto_symbol,
         crypto_amount=crypto_amount,
-        num_employees=len(addresses) if not custody_mode else len(per_employee_breakdown),
+        num_employees=len(per_employee_breakdown),
         addresses=addresses,
         tx_hash=tx_hash,
         status="pending",
@@ -436,26 +467,15 @@ async def run_payroll(req: RunPayrollRequest):
     TRANSACTIONS.insert(0, tx.model_dump(mode="json"))
 
     # Update accumulations
-    if not custody_mode:
-        eligible_with_addresses = [
-            emp
-            for emp in EMPLOYEES.values()
-            if employee_is_eligible_for_symbol(emp, req.crypto_symbol)
-            and emp.receiving_addresses.get(req.crypto_symbol)
-        ]
-        if eligible_with_addresses:
-            per_emp_share = crypto_amount / len(addresses)
-            for emp in eligible_with_addresses:
-                emp.accumulated_crypto[req.crypto_symbol] += per_emp_share
-                emp.accumulated_fiat += per_emp_share * price
-    else:
-        for item in per_employee_breakdown:
-            uid = item.get("user_id")
-            emp = EMPLOYEES.get(uid)
-            if not emp:
-                continue
-            emp.accumulated_fiat += float(item.get("fiat_amount", 0.0) or 0.0)
-            emp.accumulated_crypto[req.crypto_symbol] += float(item.get("crypto_amount", 0.0) or 0.0)
+    for item in per_employee_breakdown:
+        uid = item.get("user_id")
+        emp = EMPLOYEES.get(uid)
+        if not emp:
+            continue
+        fiat_amt = float(item.get("fiat_amount", 0.0) or 0.0)
+        crypto_amt = float(item.get("crypto_amount", 0.0) or 0.0)
+        emp.accumulated_fiat += fiat_amt
+        emp.accumulated_crypto[req.crypto_symbol] += crypto_amt
 
     save_employees_to_disk()
 
