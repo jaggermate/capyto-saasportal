@@ -1,6 +1,8 @@
+import json
 import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Literal
 
 import httpx
@@ -26,7 +28,7 @@ SUPPORTED_CRYPTOS = ["BTC", "ETH", "USDT", "USDC"]
 FIAT_CURRENCIES = ["USD", "CAD", "EUR"]
 
 # In-memory stores (MVP) with simple JSON persistence
-EMPLOYEES: Dict[str, dict] = {}
+EMPLOYEES: Dict[str, "Employee"] = {}
 TRANSACTIONS: List[dict] = []
 COMPANY_SETTINGS: dict = {
     "custody": False,  # False = pay to employee addresses; True = company custody
@@ -34,48 +36,58 @@ COMPANY_SETTINGS: dict = {
     "base_fiat": "USD",
 }
 
-DB_DIR = os.path.dirname(os.path.abspath(__file__))
-EMPLOYEES_DB_PATH = os.path.join(DB_DIR, "employees.json")
+DB_DIR = Path(__file__).resolve().parent
+EMPLOYEES_DB_PATH = DB_DIR / "employees.json"
 
 
-def load_employees_from_disk():
+def load_employees_from_disk() -> None:
+    """Populate the in-memory EMPLOYEES store from disk."""
+
     global EMPLOYEES
-    try:
-        if os.path.exists(EMPLOYEES_DB_PATH):
-            import json
-
-            with open(EMPLOYEES_DB_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                # ensure mapping by user_id and normalize to Employee objects
-                loaded = {}
-                for item in data:
-                    uid = item.get("user_id")
-                    if not uid:
-                        continue
-                    try:
-                        loaded[uid] = Employee(**item)
-                    except Exception:
-                        # fallback to minimal record
-                        loaded[uid] = Employee(user_id=uid)
-                EMPLOYEES = loaded
-    except Exception:
-        # start fresh if corrupted
+    if not EMPLOYEES_DB_PATH.exists():
         EMPLOYEES = {}
+        return
 
-
-def save_employees_to_disk():
     try:
-        import json
+        raw_content = EMPLOYEES_DB_PATH.read_text(encoding="utf-8")
+    except OSError:
+        EMPLOYEES = {}
+        return
 
-        with open(EMPLOYEES_DB_PATH, "w", encoding="utf-8") as f:
-            json.dump(list(EMPLOYEES.values()), f, indent=2, default=str)
+    try:
+        raw_data = json.loads(raw_content)
+    except json.JSONDecodeError:
+        EMPLOYEES = {}
+        return
+
+    if not isinstance(raw_data, list):
+        EMPLOYEES = {}
+        return
+
+    loaded: Dict[str, Employee] = {}
+    for entry in raw_data:
+        if not isinstance(entry, dict):
+            continue
+        uid = entry.get("user_id")
+        if not uid:
+            continue
+        try:
+            loaded[uid] = Employee(**entry)
+        except Exception:
+            loaded[uid] = Employee(user_id=uid)
+    EMPLOYEES = loaded
+
+
+def save_employees_to_disk() -> None:
+    """Persist the in-memory EMPLOYEES store to disk."""
+
+    try:
+        payload = [emp.model_dump(mode="json") for emp in EMPLOYEES.values()]
+        EMPLOYEES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        EMPLOYEES_DB_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except Exception:
         # ignore persistence errors in MVP
         pass
-
-
-# Load on startup
-load_employees_from_disk()
 
 
 class EmployeeIn(BaseModel):
@@ -101,6 +113,58 @@ class Employee(EmployeeIn):
     accumulated_crypto: Dict[str, float] = Field(
         default_factory=lambda: {s: 0.0 for s in SUPPORTED_CRYPTOS}
     )
+
+
+def _crypto_split(emp: "Employee", symbol: str) -> int:
+    try:
+        return int(getattr(emp, "crypto_split", {}).get(symbol, 0) or 0)
+    except Exception:
+        return 0
+
+
+def _employee_fixed_amount(emp: "Employee") -> float:
+    try:
+        return float(getattr(emp, "fixed_amount_fiat", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
+def employee_requested_fiat_for_symbol(emp: "Employee", symbol: str) -> float:
+    """Return the employee requested fiat amount for the given crypto symbol."""
+
+    split_pct = _crypto_split(emp, symbol)
+    if split_pct <= 0:
+        return 0.0
+
+    mode = getattr(emp, "convert_mode", "percent") or "percent"
+    if mode == "fixed":
+        return round(_employee_fixed_amount(emp) * (split_pct / 100.0), 8)
+    # Percent mode would require base salary data which the backend does not yet model
+    return 0.0
+
+
+def employee_is_eligible_for_symbol(emp: "Employee", symbol: str) -> bool:
+    split_pct = _crypto_split(emp, symbol)
+    if split_pct <= 0:
+        return False
+    mode = getattr(emp, "convert_mode", "percent") or "percent"
+    if mode == "fixed":
+        return _employee_fixed_amount(emp) > 0
+    return int(getattr(emp, "percent_to_crypto", 0) or 0) > 0
+
+
+def normalize_addresses(addresses: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
+    normalized: Dict[str, Optional[str]] = {}
+    for symbol in SUPPORTED_CRYPTOS:
+        raw_value = addresses.get(symbol)
+        if isinstance(raw_value, str):
+            raw_value = raw_value.strip() or None
+        normalized[symbol] = raw_value
+    return normalized
+
+
+# Load on startup
+load_employees_from_disk()
 
 
 class Transaction(BaseModel):
@@ -172,9 +236,17 @@ def upsert_employee(payload: EmployeeIn):
         total = sum(int(payload.crypto_split.get(s, 0)) for s in provided_syms)
         if total != 100:
             raise HTTPException(status_code=400, detail="crypto_split for provided addresses must sum to 100")
+    normalized_addresses = normalize_addresses(payload.receiving_addresses)
+    normalized_split = {s: int(payload.crypto_split.get(s, 0) or 0) for s in SUPPORTED_CRYPTOS}
     emp = EMPLOYEES.get(payload.user_id)
     if emp is None:
-        emp = Employee(**payload.model_dump())
+        emp = Employee(
+            **payload.model_dump(
+                exclude={"receiving_addresses", "crypto_split"},
+            ),
+            receiving_addresses=normalized_addresses,
+            crypto_split=normalized_split,
+        )
     else:
         # update fields
         emp.percent_to_crypto = payload.percent_to_crypto
@@ -183,11 +255,11 @@ def upsert_employee(payload: EmployeeIn):
         # keep existing addresses unless overwritten explicitly
         for sym, addr in payload.receiving_addresses.items():
             if addr is not None:
-                emp.receiving_addresses[sym] = addr
+                emp.receiving_addresses[sym] = normalized_addresses.get(sym)
         # update crypto split entirely
         if payload.crypto_split is not None:
             # ensure all symbols present
-            emp.crypto_split = {s: int(payload.crypto_split.get(s, 0)) for s in SUPPORTED_CRYPTOS}
+            emp.crypto_split = normalized_split
         # update optional metadata if provided
         if payload.first_name is not None:
             emp.first_name = payload.first_name
@@ -265,8 +337,6 @@ def sync_one_user():
         percent_to_crypto=0,
         convert_mode='percent',
         fixed_amount_fiat=0.0,
-        receiving_addresses={s: "" for s in SUPPORTED_CRYPTOS},
-        crypto_split={s: 0 for s in SUPPORTED_CRYPTOS},
         first_name=first,
         last_name=last,
         address=addr,
@@ -294,23 +364,9 @@ async def run_payroll(req: RunPayrollRequest):
 
     custody_mode = bool(COMPANY_SETTINGS.get("custody"))
 
-    # Helper: compute employee requested fiat for this crypto symbol
-    def employee_requested_fiat_for_symbol(emp: Employee, symbol: str) -> float:
-        try:
-            split_pct = int(getattr(emp, 'crypto_split', {}).get(symbol, 0))
-            if split_pct <= 0:
-                return 0.0
-            mode = getattr(emp, 'convert_mode', 'percent')
-            if mode == 'fixed':
-                base_amt = float(getattr(emp, 'fixed_amount_fiat', 0.0) or 0.0)
-                return round(base_amt * (split_pct / 100.0), 8)
-            # percent mode requires a base salary we don't model yet in backend
-            return 0.0
-        except Exception:
-            return 0.0
-
     per_employee_breakdown: List[dict] = []
     addresses: List[str] = []
+    eligible_with_addresses: List[Employee] = []
 
     if custody_mode:
         wallet = COMPANY_SETTINGS.get("company_wallets", {}).get(req.crypto_symbol)
@@ -338,18 +394,19 @@ async def run_payroll(req: RunPayrollRequest):
             raise HTTPException(status_code=400, detail="payroll_fiat_total must be > 0")
         payroll_fiat_total = req.payroll_fiat_total
         crypto_amount = payroll_fiat_total / price
-        def is_eligible(emp: Employee) -> bool:
-            try:
-                mode = getattr(emp, 'convert_mode', 'percent')
-                if mode == 'fixed':
-                    return (getattr(emp, 'fixed_amount_fiat', 0.0) or 0.0) > 0
-                return (emp.percent_to_crypto or 0) > 0
-            except Exception:
-                return (emp.percent_to_crypto or 0) > 0
+        eligible_employees: List[Employee] = [
+            emp
+            for emp in EMPLOYEES.values()
+            if employee_is_eligible_for_symbol(emp, req.crypto_symbol)
+        ]
+        eligible_with_addresses = [
+            emp
+            for emp in eligible_employees
+            if emp.receiving_addresses.get(req.crypto_symbol)
+        ]
         addresses = [
             emp.receiving_addresses.get(req.crypto_symbol)
-            for emp in EMPLOYEES.values()
-            if is_eligible(emp) and emp.receiving_addresses.get(req.crypto_symbol)
+            for emp in eligible_with_addresses
         ]
         if not addresses:
             raise HTTPException(status_code=400, detail="No eligible employee addresses")
@@ -376,22 +433,19 @@ async def run_payroll(req: RunPayrollRequest):
         price_at_tx=price,
         per_employee_breakdown=per_employee_breakdown or None,
     )
-    TRANSACTIONS.insert(0, tx.model_dump())
+    TRANSACTIONS.insert(0, tx.model_dump(mode="json"))
 
     # Update accumulations
     if not custody_mode:
-        per_emp_share = crypto_amount / len(addresses)
-        def is_eligible(emp: Employee) -> bool:
-            try:
-                mode = getattr(emp, 'convert_mode', 'percent')
-                if mode == 'fixed':
-                    return (getattr(emp, 'fixed_amount_fiat', 0.0) or 0.0) > 0
-                return (emp.percent_to_crypto or 0) > 0
-            except Exception:
-                return (emp.percent_to_crypto or 0) > 0
-        for emp in EMPLOYEES.values():
-            addr = emp.receiving_addresses.get(req.crypto_symbol)
-            if is_eligible(emp) and addr in addresses:
+        eligible_with_addresses = [
+            emp
+            for emp in EMPLOYEES.values()
+            if employee_is_eligible_for_symbol(emp, req.crypto_symbol)
+            and emp.receiving_addresses.get(req.crypto_symbol)
+        ]
+        if eligible_with_addresses:
+            per_emp_share = crypto_amount / len(addresses)
+            for emp in eligible_with_addresses:
                 emp.accumulated_crypto[req.crypto_symbol] += per_emp_share
                 emp.accumulated_fiat += per_emp_share * price
     else:
