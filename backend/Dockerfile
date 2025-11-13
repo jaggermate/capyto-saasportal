@@ -20,4 +20,4 @@ EXPOSE 8000
 
 # Entrypoint: run FastAPI app with Uvicorn
 # main.py is at /app/main.py, so the app import path is "main:app"
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7000"]
