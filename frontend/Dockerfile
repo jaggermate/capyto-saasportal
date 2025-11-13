@@ -9,7 +9,7 @@ COPY ./frontend/package*.json ./
 RUN npm ci
 
 # Copy source and build
-COPY ./ .
+COPY ./frontend/ .
 
 # Build-time API base can be overridden: --build-arg VITE_API_BASE=http://api:8000
 ARG VITE_API_BASE=http://localhost:8000
