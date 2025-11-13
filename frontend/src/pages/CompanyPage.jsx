@@ -44,6 +44,132 @@ function getEmployeeRequestedFiat(employee, symbol, { needsAddress = false } = {
 }
 
 export default function CompanyPage() {
+  // Helpers: export and print
+  const downloadFile = (filename, mime, content) => {
+    const blob = new Blob([content], { type: mime + ';charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const toCSV = (rows) => {
+    const esc = (v) => {
+      if (v == null) return ''
+      const s = String(v)
+      if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"'
+      return s
+    }
+    if (!rows || rows.length === 0) return ''
+    const headers = Object.keys(rows[0])
+    const lines = [headers.map(esc).join(','), ...rows.map(r => headers.map(h => esc(r[h])).join(','))]
+    return lines.join('\n')
+  }
+
+  const exportTransactionsCSV = (items) => {
+    const rows = (items || []).map(t => ({
+      date: new Date(t.date).toISOString(),
+      tx_hash: t.tx_hash,
+      status: t.status,
+      crypto_symbol: t.crypto_symbol,
+      crypto_amount: Number(t.crypto_amount).toFixed(6),
+      fiat_amount: Number(t.fiat_amount).toFixed(2),
+      fiat_currency: t.fiat_currency,
+      price_at_tx: Number(t.price_at_tx).toFixed(2),
+      num_employees: t.num_employees,
+    }))
+    downloadFile('transactions.csv', 'text/csv', toCSV(rows))
+  }
+
+  const exportSingleTxCSV = (tx) => {
+    const headerRow = [{
+      date: new Date(tx.date).toISOString(),
+      tx_hash: tx.tx_hash,
+      status: tx.status,
+      crypto_symbol: tx.crypto_symbol,
+      crypto_amount: Number(tx.crypto_amount).toFixed(6),
+      fiat_amount: Number(tx.fiat_amount).toFixed(2),
+      fiat_currency: tx.fiat_currency,
+      price_at_tx: Number(tx.price_at_tx).toFixed(2),
+      num_employees: tx.num_employees,
+    }]
+    const breakdown = Array.isArray(tx.per_employee_breakdown) ? tx.per_employee_breakdown : []
+    const rows = breakdown.map(row => ({
+      user: row.is_company ? 'Company benefit' : (row.user_id || ''),
+      fiat_amount: Number(row.fiat_amount || 0).toFixed(2),
+      crypto_amount: Number(row.crypto_amount || 0).toFixed(6),
+      address: row.address || '',
+    }))
+    const csv = toCSV(headerRow) + (rows.length ? ('\n\n' + toCSV(rows)) : '')
+    downloadFile(`transaction_${tx.tx_hash.slice(0,8)}.csv`, 'text/csv', csv)
+  }
+
+  const openPrintWindow = (title, html) => {
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(`<!doctype html><html><head><title>${title}</title>
+      <meta charset='utf-8'/>
+      <style>
+        body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji'; padding:16px; color:#0f172a}
+        h1{font-size:18px;margin:0 0 12px}
+        table{border-collapse:collapse; width:100%; font-size:12px}
+        th,td{border:1px solid #e2e8f0; padding:6px 8px; text-align:left}
+        th{background:#f8fafc}
+        .muted{color:#64748b; font-size:11px}
+      </style>
+    </head><body>${html}<script>window.onload = () => { window.print(); }</script></body></html>`)
+    win.document.close()
+  }
+
+  const printTransactions = (items) => {
+    const rows = (items || []).map(t => `
+      <tr>
+        <td>${new Date(t.date).toLocaleString()}</td>
+        <td>${t.tx_hash}</td>
+        <td>${t.status}</td>
+        <td>${t.crypto_amount.toFixed(6)} ${t.crypto_symbol}</td>
+        <td>${t.fiat_amount.toFixed(2)} ${t.fiat_currency}</td>
+        <td>@ ${t.price_at_tx.toFixed(2)} ${t.fiat_currency}</td>
+        <td>${t.num_employees}</td>
+      </tr>`).join('')
+    const html = `
+      <h1>Transactions export</h1>
+      <div class="muted">Generated ${new Date().toLocaleString()}</div>
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Hash</th><th>Status</th><th>Crypto</th><th>Fiat total</th><th>Rate</th><th># Employees</th>
+        </tr></thead>
+        <tbody>${rows || '<tr><td colspan=7>No data</td></tr>'}</tbody>
+      </table>`
+    openPrintWindow('Transactions', html)
+  }
+
+  const printSingleTx = (tx) => {
+    const head = `
+      <h1>Transaction ${tx.tx_hash}</h1>
+      <div class="muted">${new Date(tx.date).toLocaleString()} • Status: ${tx.status}</div>
+      <p><strong>${tx.crypto_amount.toFixed(6)} ${tx.crypto_symbol}</strong> • ${tx.fiat_amount.toFixed(2)} ${tx.fiat_currency} @ ${tx.price_at_tx.toFixed(2)} ${tx.fiat_currency}</p>
+    `
+    const breakdown = Array.isArray(tx.per_employee_breakdown) ? tx.per_employee_breakdown : []
+    const rows = breakdown.map(row => `
+      <tr>
+        <td>${row.is_company ? 'Company benefit' : (row.user_id || '')}</td>
+        <td>${Number(row.fiat_amount || 0).toFixed(2)} ${tx.fiat_currency}</td>
+        <td>${Number(row.crypto_amount || 0).toFixed(6)} ${tx.crypto_symbol}</td>
+        <td>${row.address || ''}</td>
+      </tr>`).join('')
+    const table = `
+      <h2>Employee breakdown</h2>
+      <table>
+        <thead><tr><th>User</th><th>Fiat</th><th>Crypto</th><th>Address</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=4>No data</td></tr>'}</tbody>
+      </table>`
+    openPrintWindow('Transaction', head + table)
+  }
   // Helper UI components from CryptoTxPage
   const SummaryCard = ({ label, value, hint }) => (
     <div className="rounded-xl border border-gray-100 bg-white/70 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
@@ -340,6 +466,10 @@ export default function CompanyPage() {
             </div>
 
             <div className="flex flex-col gap-3 w-full lg:w-auto lg:flex-row">
+              <div className="flex gap-2 order-2 lg:order-none">
+                <button className="btn btn-secondary" onClick={() => exportTransactionsCSV(filteredTxs)}>Export CSV</button>
+                <button className="btn btn-secondary" onClick={() => printTransactions(filteredTxs)}>Export PDF</button>
+              </div>
               <select
                 className="input lg:w-48"
                 value={assetFilter}
@@ -444,13 +574,17 @@ export default function CompanyPage() {
       {selectedTx && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 px-4">
           <div className="bg-white dark:bg-slate-900 w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-700 p-6 space-y-6">
-            <div className="flex justify-between gap-4">
+            <div className="flex justify-between items-start gap-4">
               <div>
                 <div className="subtitle text-gray-500 uppercase tracking-wide">Transaction details</div>
                 <div className="title">{new Date(selectedTx.date).toLocaleString()}</div>
                 <div className="text-xs text-gray-500 font-mono break-all">{selectedTx.tx_hash}</div>
               </div>
-              <button className="btn btn-secondary" onClick={()=>setSelectedTx(null)}>Close</button>
+              <div className="flex gap-2 ml-auto">
+                <button className="btn btn-secondary" onClick={() => exportSingleTxCSV(selectedTx)}>Export CSV</button>
+                <button className="btn btn-secondary" onClick={() => printSingleTx(selectedTx)}>Export PDF</button>
+                <button className="btn btn-secondary" onClick={()=>setSelectedTx(null)}>Close</button>
+              </div>
             </div>
             <div className="grid md:grid-cols-3 gap-4 text-sm">
               <div className="p-4 rounded-lg border border-gray-100 dark:border-slate-700">
