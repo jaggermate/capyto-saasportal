@@ -12,7 +12,7 @@ RUN npm ci
 COPY ./frontend/ .
 
 # Build-time API base can be overridden: --build-arg VITE_API_BASE=http://api:8000
-ARG VITE_API_BASE=http://localhost:8000
+ARG VITE_API_BASE=http://capytosaas-backend:8000
 ENV VITE_API_BASE=${VITE_API_BASE}
 
 ENTRYPOINT ["npm", "run", "dev"]
