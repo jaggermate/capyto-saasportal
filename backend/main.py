@@ -35,6 +35,13 @@ COMPANY_SETTINGS: dict = {
     "company_wallets": {"BTC": "", "ETH": "", "USDT": "", "USDC": ""},
     "base_fiat": "CAD",
     "company_benefit_amount": 0.0,
+    "banking": {
+        "bank_name": "",
+        "account_name": "",
+        "account_number": "",
+        "routing_number_or_iban": "",
+        "bank_country": "",
+    },
 }
 
 DB_DIR = Path(__file__).resolve().parent
@@ -218,11 +225,20 @@ class RunPayrollRequest(BaseModel):
     crypto_symbol: str
 
 
+class BankingInfo(BaseModel):
+    bank_name: Optional[str] = ""
+    account_name: Optional[str] = ""
+    account_number: Optional[str] = ""
+    routing_number_or_iban: Optional[str] = ""
+    bank_country: Optional[str] = ""
+
+
 class CompanySettings(BaseModel):
     custody: bool
     company_wallets: Dict[str, Optional[str]]
     base_fiat: str = "CAD"
     company_benefit_amount: float = 0.0
+    banking: BankingInfo = Field(default_factory=BankingInfo)
 
 
 @app.get("/health")
@@ -244,12 +260,15 @@ def get_company():
 def update_company(settings: CompanySettings):
     # sanitize wallets keys
     wallet_map = {s: settings.company_wallets.get(s) for s in SUPPORTED_CRYPTOS}
+    # banking info as plain dict
+    banking = settings.banking.model_dump() if hasattr(settings, "banking") and settings.banking else {}
     COMPANY_SETTINGS.update(
         {
             "custody": settings.custody,
             "company_wallets": wallet_map,
             "base_fiat": settings.base_fiat if settings.base_fiat in FIAT_CURRENCIES else "CAD",
             "company_benefit_amount": max(0.0, float(settings.company_benefit_amount or 0.0)),
+            "banking": {**COMPANY_SETTINGS.get("banking", {}), **banking},
         }
     )
     return COMPANY_SETTINGS

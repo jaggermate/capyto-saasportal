@@ -6,7 +6,6 @@ import { getPrices, listEmployees, upsertEmployee, getSupported, listTransaction
 import { getEmployeeTransactions, resolveNetSalary } from '../utils/employees.js'
 
 function LastPayday({ employee, fiat, prices, percent, split, convertMode='percent', fixedAmount=0 }) {
-  const gross = Number(employee?.gross_salary || 0)
   const net = resolveNetSalary(employee)
   const pct = Number(percent || 0)
   const baseToConvert = convertMode === 'fixed' ? Number(fixedAmount || 0) : (net * pct) / 100
@@ -16,11 +15,7 @@ function LastPayday({ employee, fiat, prices, percent, split, convertMode='perce
   return (
     <div className="mt-4 p-3 rounded bg-gray-50 dark:bg-slate-800/40">
       <div className="subtitle mb-2">Last payday</div>
-      <div className="text-sm grid md:grid-cols-3 gap-3">
-        <div>
-          <div className="text-gray-500">Gross</div>
-          <div className="font-semibold">{gross > 0 ? `${gross.toFixed(2)} ${fiat}` : '—'}</div>
-        </div>
+      <div className="text-sm grid md:grid-cols-2 gap-3">
         <div>
           <div className="text-gray-500">Net</div>
           <div className="font-semibold">{net > 0 ? `${net.toFixed(2)} ${fiat}` : '—'}</div>
@@ -59,13 +54,12 @@ function UserInfoCard({ employee, fiat='CAD' }) {
   const name = [employee.first_name, employee.last_name].filter(Boolean).join(' ').trim()
   const displayName = name || employee.user_id
   const address = employee.address || 'No address on file'
-  const gross = Number(employee?.gross_salary || 0)
   const net = resolveNetSalary(employee)
   const salaryDisplay = (value) => value > 0 ? `${value.toFixed(2)} ${fiat}` : 'Not provided'
   return (
     <div className="card p-4">
       <div className="title mb-2">User info</div>
-      <div className="grid md:grid-cols-4 gap-3 text-sm">
+      <div className="grid md:grid-cols-3 gap-3 text-sm">
         <div>
           <div className="text-gray-500">Name</div>
           <div className="font-semibold">{displayName}</div>
@@ -75,14 +69,10 @@ function UserInfoCard({ employee, fiat='CAD' }) {
           <div className="font-mono text-xs md:text-sm break-all">{employee.user_id}</div>
         </div>
         <div>
-          <div className="text-gray-500">Gross salary (per pay)</div>
-          <div className="font-semibold">{salaryDisplay(gross)}</div>
-        </div>
-        <div>
           <div className="text-gray-500">Net salary (per pay)</div>
           <div className="font-semibold">{salaryDisplay(net)}</div>
         </div>
-        <div className="md:col-span-4">
+        <div className="md:col-span-3">
           <div className="text-gray-500">Address</div>
           <div className="text-sm">{address}</div>
         </div>
@@ -236,7 +226,6 @@ export default function EmployeePage() {
                 {employees.map(e => (
                   <option key={e.user_id} value={e.user_id}>{e.user_id}</option>
                 ))}
-                <option value="__new__">+ Create new user…</option>
               </select>
             </div>
           ) : (

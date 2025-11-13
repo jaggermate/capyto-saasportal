@@ -21,9 +21,9 @@
     "first_name": "David",
     "last_name": "C\u00f4t\u00e9",
     "address": "3681 Rue Sainte-Catherine, Sherbrooke, QC, H3H 8Y3",
-    "accumulated_fiat": 3175.2,
+    "accumulated_fiat": 4233.599999999999,
     "accumulated_crypto": {
-      "BTC": 0.028642503685,
+      "BTC": 0.036097127887,
       "ETH": 0.0,
       "USDT": 0.0,
       "USDC": 0.0
@@ -51,9 +51,9 @@
     "first_name": "Thomas",
     "last_name": "Morin",
     "address": "6556 Chemin Sainte-Foy, Terrebonne, QC, V7Y 9L3",
-    "accumulated_fiat": 1500.0,
+    "accumulated_fiat": 2000.0,
     "accumulated_crypto": {
-      "BTC": 0.013531039156,
+      "BTC": 0.017052687020999997,
       "ETH": 0.0,
       "USDT": 0.0,
       "USDC": 0.0
@@ -81,6 +81,36 @@
     "first_name": "Lucas",
     "last_name": "Fortin",
     "address": "1622 Chemin Sainte-Foy, Montr\u00e9al, QC, A1C 8A8",
+    "accumulated_fiat": 0.0,
+    "accumulated_crypto": {
+      "BTC": 0.0,
+      "ETH": 0.0,
+      "USDT": 0.0,
+      "USDC": 0.0
+    }
+  },
+  {
+    "user_id": "sophie.tremblay",
+    "percent_to_crypto": 0,
+    "convert_mode": "percent",
+    "fixed_amount_fiat": 0.0,
+    "gross_salary": 1813.95,
+    "net_salary": 1497.42,
+    "receiving_addresses": {
+      "BTC": null,
+      "ETH": null,
+      "USDT": null,
+      "USDC": null
+    },
+    "crypto_split": {
+      "BTC": 0,
+      "ETH": 0,
+      "USDT": 0,
+      "USDC": 0
+    },
+    "first_name": "Sophie",
+    "last_name": "Tremblay",
+    "address": "7519 Avenue du Mont-Royal, L\u00e9vis, QC, L8G 2V3",
     "accumulated_fiat": 0.0,
     "accumulated_crypto": {
       "BTC": 0.0,

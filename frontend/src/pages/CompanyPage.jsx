@@ -1,10 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import DashboardTable from '../components/DashboardTable.jsx'
+import { NavLink } from 'react-router-dom'
 import TransactionsTable from '../components/TransactionsTable.jsx'
-import { confirmTx, getCompany, getPrices, getSupported, listEmployees, listTransactions, runPayroll, updateCompany } from '../services/api.js'
+import PortfolioCard from '../components/PortfolioCard.jsx'
+import { confirmTx, getCompany, getPrices, getSupported, listEmployees, listTransactions, runPayroll } from '../services/api.js'
 import { numberify, resolveNetSalary } from '../utils/employees.js'
 
 const toNumber = (value) => numberify(value)
+
+const statusFilters = [
+  { label: 'All', value: 'all' },
+  { label: 'Confirmed', value: 'confirmed' },
+  { label: 'Pending', value: 'pending' },
+]
+
+const currencyFormatter = (value, currency = 'USD') =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: currency === 'BTC' ? 8 : 2,
+  }).format(value)
 
 function getEmployeeRequestedFiat(employee, symbol, { needsAddress = false } = {}) {
   if (!employee || !symbol) return 0
@@ -30,6 +44,28 @@ function getEmployeeRequestedFiat(employee, symbol, { needsAddress = false } = {
 }
 
 export default function CompanyPage() {
+  // Helper UI components from CryptoTxPage
+  const SummaryCard = ({ label, value, hint }) => (
+    <div className="rounded-xl border border-gray-100 bg-white/70 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
+      <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 text-xl font-semibold text-slate-900 dark:text-white">{value}</p>
+      {hint && <p className="text-xs text-gray-500 dark:text-slate-400">{hint}</p>}
+    </div>
+  )
+
+  const Chip = ({ label }) => (
+    <span className="rounded-full border border-gray-200 bg-white/70 px-3 py-1 text-xs font-medium text-gray-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+      {label}
+    </span>
+  )
+
+  const InsightCard = ({ title, value, detail }) => (
+    <div className="card p-4">
+      <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-slate-400">{title}</p>
+      <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{value}</p>
+      <p className="text-sm text-gray-500 dark:text-slate-400">{detail}</p>
+    </div>
+  )
   const [company, setCompany] = useState({ custody: false, company_wallets: { BTC: '', ETH: '', USDT: '', USDC: '' }, base_fiat: 'CAD', company_benefit_amount: 0 })
   const [employees, setEmployees] = useState([])
   const [txs, setTxs] = useState([])
@@ -37,11 +73,13 @@ export default function CompanyPage() {
   const [prices, setPrices] = useState({})
   const [payroll, setPayroll] = useState({ symbol: 'BTC' })
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('settings')
   const [running, setRunning] = useState(false)
-  const [saving, setSaving] = useState(false)
   const [showPayrollModal, setShowPayrollModal] = useState(false)
   const [selectedTx, setSelectedTx] = useState(null)
+  // Filters for transactions section (moved from CryptoTxPage)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [assetFilter, setAssetFilter] = useState('all')
+  const [search, setSearch] = useState('')
 
   const PAYROLL_FEE_RATE = 0.0125
 
@@ -74,12 +112,6 @@ export default function CompanyPage() {
     setLoading(false)
   }
 
-  const saveSettings = async () => {
-    setSaving(true)
-    const data = await updateCompany(company)
-    setCompany(data)
-    setSaving(false)
-  }
 
   const totalToConvert = useMemo(() => {
     const symbol = payroll.symbol
@@ -136,73 +168,67 @@ export default function CompanyPage() {
     }
   }
 
+  // Derived values for moved CryptoTxPage section
+  const holdings = useMemo(() => {
+    const bal = { BTC: 0, ETH: 0, USDT: 0, USDC: 0 }
+    if (company.custody) {
+      txs.forEach(t => {
+        bal[t.crypto_symbol] = (bal[t.crypto_symbol] || 0) + t.crypto_amount
+      })
+    }
+    return bal
+  }, [txs, company.custody])
+
+  const sortedTxs = useMemo(
+    () => [...txs].sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [txs],
+  )
+
+  const uniqueAssets = useMemo(
+    () => Array.from(new Set(txs.map(t => t.crypto_symbol))).sort(),
+    [txs],
+  )
+
+  const filteredTxs = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return sortedTxs.filter(tx => {
+      const matchesStatus = statusFilter === 'all' || tx.status === statusFilter
+      const matchesAsset = assetFilter === 'all' || tx.crypto_symbol === assetFilter
+      const matchesSearch =
+        !query ||
+        `${tx.tx_hash} ${tx.crypto_symbol} ${tx.fiat_currency}`
+          .toLowerCase()
+          .includes(query)
+      return matchesStatus && matchesAsset && matchesSearch
+    })
+  }, [sortedTxs, statusFilter, assetFilter, search])
+
+  const totalVolume = useMemo(
+    () => txs.reduce((sum, tx) => sum + tx.fiat_amount, 0),
+    [txs],
+  )
+  const pendingVolume = useMemo(
+    () => txs.filter(tx => tx.status !== 'confirmed').reduce((sum, tx) => sum + tx.fiat_amount, 0),
+    [txs],
+  )
+  const avgEmployees = useMemo(() => {
+    if (!txs.length) return 0
+    const total = txs.reduce((sum, tx) => sum + tx.num_employees, 0)
+    return total / txs.length
+  }, [txs])
+
+  const nextPayout = useMemo(() => sortedTxs.find(tx => tx.status !== 'confirmed'), [sortedTxs])
+  const lastRun = sortedTxs[0]
+  const numEmployees = employees.length
+
   return (
     <>
       <div className="space-y-6">
       <div className="card p-0 overflow-hidden">
         <div className="flex border-b border-gray-100 dark:border-slate-700">
-          <button className={`flex-1 py-3 text-sm ${tab==='settings'?'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400':'text-gray-600 dark:text-slate-300'}`} onClick={()=>setTab('settings')}>Company settings</button>
-          <button className={`flex-1 py-3 text-sm ${tab==='payroll'?'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400':'text-gray-600 dark:text-slate-300'}`} onClick={()=>setTab('payroll')}>Next payroll</button>
+          <div className="flex-1 text-center py-3 text-sm text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400">Next payroll</div>
         </div>
         <div className="p-4">
-          {tab==='settings' ? (
-            <div className="grid md:grid-cols-3 gap-4">
-              <div className="md:col-span-2">
-                <div className="grid md:grid-cols-3 gap-3">
-                  <div>
-                    <div className="label">Fiat currency</div>
-                    <select className="input" value={company.base_fiat} onChange={e => setCompany(prev => ({...prev, base_fiat: e.target.value}))}>
-                      {supported.fiats?.map(f => <option key={f} value={f}>{f}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <div className="label">Custody type</div>
-                    <select className="input" value={company.custody ? 'custody' : 'direct'} onChange={e => setCompany(prev => ({...prev, custody: e.target.value === 'custody'}))}>
-                      <option value="direct">Pay to employee addresses</option>
-                      <option value="custody">Company holds custody</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <div className="subtitle mb-2">Company wallet addresses (used when custody is enabled)</div>
-              <div className="grid md:grid-cols-2 gap-3">
-                {supported.cryptos?.map(sym => (
-                  <div key={sym}>
-                    <div className="label">{sym} wallet</div>
-                    <input className="input" value={company.company_wallets?.[sym] || ''} onChange={e => setCompany(prev => ({...prev, company_wallets: {...prev.company_wallets, [sym]: e.target.value}}))} placeholder={`Enter ${sym} treasury address`} />
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4">
-                <div className="label">Company benefit per payroll ({company.base_fiat})</div>
-                <input type="number" min="0" step="0.01" className="input" value={company.company_benefit_amount ?? 0}
-                       onChange={e => {
-                         const val = e.target.value
-                         setCompany(prev => ({...prev, company_benefit_amount: val === '' ? 0 : Number(val)}))
-                       }} />
-                <div className="text-xs text-gray-500 mt-1">Converted each run in addition to employee allocations. Requires a wallet for the selected crypto.</div>
-              </div>
-              <button className="btn btn-primary mt-3" onClick={saveSettings} disabled={saving}>{saving?'Saving...':'Save settings'}</button>
-            </div>
-              </div>
-              <div>
-                <div className="subtitle mb-1">Total fiat to convert (est.)</div>
-                {loading ? (
-                  <div className="space-y-2">
-                    <div className="skeleton-line w-40"></div>
-                    <div className="skeleton-line w-24"></div>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="text-2xl font-semibold">{totalToConvert.toFixed(2)} {company.base_fiat}</div>
-                    {toNumber(company.company_benefit_amount) > 0 && (
-                      <div className="text-xs text-gray-500">Includes {toNumber(company.company_benefit_amount).toFixed(2)} {company.base_fiat} company benefit.</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
             <div className="grid md:grid-cols-3 gap-4">
               <div className="md:col-span-2">
                 <div className="label">Crypto to buy</div>
@@ -225,36 +251,131 @@ export default function CompanyPage() {
                 )}
               </div>
             </div>
-          )}
         </div>
       </div>
 
-      <div>
-        <div className="title mb-2">Employees</div>
-        {loading ? (
-          <div className="card p-4 space-y-2">
-            <div className="skeleton-line"></div>
-            <div className="skeleton-line"></div>
-            <div className="skeleton-line"></div>
-          </div>
-        ) : (
-          <DashboardTable employees={employees} fiat={company.base_fiat} />
-        )}
+
       </div>
 
-      <div>
-        <div className="title mb-2">Deposits history</div>
-        {loading ? (
-          <div className="card p-4 space-y-2">
-            <div className="skeleton-line"></div>
-            <div className="skeleton-line"></div>
-            <div className="skeleton-line"></div>
+      {/* Moved CryptoTxPage content below */}
+      <div className="space-y-6 mt-6">
+        <div className="grid gap-6 xl:grid-cols-[1.3fr,1fr]">
+          <section className="card p-6 space-y-5">
+            <header className="space-y-2">
+              <p className="text-xs uppercase tracking-wide text-blue-500">Transactions</p>
+              <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Crypto payroll activity</h1>
+              <p className="text-sm text-gray-500 dark:text-slate-400">
+                Monitor how crypto payouts move through custody, keep an eye on confirmation states, and identify
+                batches that may need attention.
+              </p>
+            </header>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              <SummaryCard label="Total payroll volume" value={currencyFormatter(totalVolume, company.base_fiat)} hint="Lifetime" />
+              <SummaryCard
+                label="Awaiting confirmation"
+                value={currencyFormatter(pendingVolume, company.base_fiat)}
+                hint={`${txs.filter(tx => tx.status !== 'confirmed').length} batches`}
+              />
+              <SummaryCard
+                label="Avg. recipients / run"
+                value={avgEmployees.toFixed(1)}
+                hint={`${numEmployees} employees listed`}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Chip label={`Base fiat • ${company.base_fiat}`} />
+              <Chip label={company.custody ? 'Custody: company wallets' : 'Custody: sent to employees'} />
+              <Chip label={`Employees • ${numEmployees}`} />
+              {lastRun && <Chip label={`Last run • ${new Date(lastRun.date).toLocaleDateString()}`} />}
+            </div>
+          </section>
+
+          {loading ? (
+            <div className="card p-6 space-y-3">
+              <div className="skeleton-line w-40"></div>
+              <div className="skeleton-line w-24"></div>
+              <div className="skeleton-line"></div>
+            </div>
+          ) : (
+            <PortfolioCard custody={company.custody} prices={prices} holdings={holdings} fiat={company.base_fiat} />
+          )}
+        </div>
+
+        <section className="grid gap-4 md:grid-cols-3">
+          <InsightCard
+            title="Next payout window"
+            value={nextPayout ? new Date(nextPayout.date).toLocaleString() : 'Everything settled'}
+            detail={nextPayout ? `${nextPayout.crypto_symbol} • ${nextPayout.num_employees} employees` : 'No pending batches'}
+          />
+          <InsightCard
+            title="Conversion coverage"
+            value={`${txs.length ? Math.round((txs.filter(tx => tx.status === 'confirmed').length / txs.length) * 100) : 0}%`}
+            detail="Runs confirmed in the last 30 days"
+          />
+          <InsightCard
+            title="Top asset"
+            value={uniqueAssets[0] || '—'}
+            detail={uniqueAssets.length ? `${uniqueAssets.length} assets active` : 'Add your first transaction'}
+          />
+        </section>
+
+        <section className="card p-5 space-y-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {statusFilters.map(filter => (
+                <button
+                  key={filter.value}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    statusFilter === filter.value
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-300'
+                  }`}
+                  onClick={() => setStatusFilter(filter.value)}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-3 w-full lg:w-auto lg:flex-row">
+              <select
+                className="input lg:w-48"
+                value={assetFilter}
+                onChange={e => setAssetFilter(e.target.value)}
+              >
+                <option value="all">All assets</option>
+                {uniqueAssets.map(symbol => (
+                  <option key={symbol} value={symbol}>
+                    {symbol}
+                  </option>
+                ))}
+              </select>
+              <div className="relative flex-1 lg:w-64">
+                <input
+                  className="input pl-9"
+                  placeholder="Search hash or currency"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+                <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
+              </div>
+            </div>
           </div>
-        ) : (
-          <TransactionsTable items={txs} onSelect={setSelectedTx} />
-        )}
+
+          {loading ? (
+            <div className="space-y-2">
+              <div className="skeleton-line"></div>
+              <div className="skeleton-line"></div>
+              <div className="skeleton-line"></div>
+            </div>
+          ) : (
+            <TransactionsTable items={filteredTxs} emptyMessage="No transactions match your filters yet." onSelect={setSelectedTx} />
+          )}
+        </section>
       </div>
-      </div>
+
       {showPayrollModal && (
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
         <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-xl shadow-2xl border border-gray-200 dark:border-slate-700 p-6 space-y-4">

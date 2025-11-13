@@ -5,8 +5,8 @@ import './index.css'
 import App from './App.jsx'
 import EmployeePage from './pages/EmployeePage.jsx'
 import CompanyPage from './pages/CompanyPage.jsx'
-import CryptoTxPage from './pages/CryptoTxPage.jsx'
 import EmployeesPage from './pages/EmployeesPage.jsx'
+import SettingsPage from './pages/SettingsPage.jsx'
 
 const router = createBrowserRouter([
   {
@@ -16,7 +16,7 @@ const router = createBrowserRouter([
       { index: true, element: <EmployeePage /> },
       { path: 'company', element: <CompanyPage /> },
       { path: 'employees', element: <EmployeesPage /> },
-      { path: 'transactions', element: <CryptoTxPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
   },
 ])
