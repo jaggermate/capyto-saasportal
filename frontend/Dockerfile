@@ -1,20 +1,21 @@
-# Frontend Dockerfile - React (Vite) served by Nginx
-# 1) Build stage
-FROM node:20-alpine AS build
+# Frontend Dockerfile - build Vite app and serve via Nginx
 
+FROM node:20-alpine AS build
 WORKDIR /app
 
-# Install dependencies first (better caching)
 COPY ./frontend/package*.json ./
 RUN npm ci
 
-# Copy source and build
 COPY ./frontend/ .
 
-# Build-time API base can be overridden: --build-arg VITE_API_BASE=http://api:8000
-ARG VITE_API_BASE=http://capytosaas-backend:8000
+# Build-time API base can be overridden: --build-arg VITE_API_BASE=https://api.example.com
+ARG VITE_API_BASE=/api
 ENV VITE_API_BASE=${VITE_API_BASE}
 
-ENTRYPOINT ["npm", "run", "dev"]
+RUN npm run build
 
-EXPOSE 5173
+FROM nginx:1.27-alpine
+COPY ./frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80

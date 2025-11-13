@@ -46,8 +46,8 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
       args:
-        # Build-time base URL so the static app knows where the API is
-        VITE_API_BASE: http://capytosaas-backend:8000
+        # Serve the API through nginx so browsers use the same origin
+        VITE_API_BASE: /api
     container_name: capytosaas-frontend
     depends_on:
       - backend
