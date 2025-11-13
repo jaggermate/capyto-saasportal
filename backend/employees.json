@@ -21,9 +21,9 @@
     "first_name": "David",
     "last_name": "C\u00f4t\u00e9",
     "address": "3681 Rue Sainte-Catherine, Sherbrooke, QC, H3H 8Y3",
-    "accumulated_fiat": 529.2,
+    "accumulated_fiat": 3175.2,
     "accumulated_crypto": {
-      "BTC": 0.005282108186,
+      "BTC": 0.028642503685,
       "ETH": 0.0,
       "USDT": 0.0,
       "USDC": 0.0
@@ -51,9 +51,9 @@
     "first_name": "Thomas",
     "last_name": "Morin",
     "address": "6556 Chemin Sainte-Foy, Terrebonne, QC, V7Y 9L3",
-    "accumulated_fiat": 250.0,
+    "accumulated_fiat": 1500.0,
     "accumulated_crypto": {
-      "BTC": 0.002495326997,
+      "BTC": 0.013531039156,
       "ETH": 0.0,
       "USDT": 0.0,
       "USDC": 0.0

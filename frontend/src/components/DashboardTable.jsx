@@ -1,13 +1,19 @@
 import React from 'react'
 
-export default function DashboardTable({ employees = [] }) {
+const formatAmount = (value, fiat) => {
+  const num = Number(value || 0)
+  const safe = Number.isFinite(num) ? num : 0
+  return `${safe.toFixed(2)} ${fiat}`
+}
+
+export default function DashboardTable({ employees = [], fiat = 'CAD' }) {
   return (
     <div className="card overflow-hidden">
       <table className="table">
         <thead>
           <tr>
             <th>User ID</th>
-            <th>% to crypto</th>
+            <th>Allocation</th>
             <th>BTC addr</th>
           </tr>
         </thead>
@@ -15,7 +21,13 @@ export default function DashboardTable({ employees = [] }) {
           {employees.map(e => (
             <tr key={e.user_id}>
               <td>{e.user_id}</td>
-              <td><span className="badge badge-blue">{e.percent_to_crypto}%</span></td>
+              <td>
+                {e.convert_mode === 'fixed' ? (
+                  <span className="badge badge-purple">{formatAmount(e.fixed_amount_fiat, fiat)} fixed</span>
+                ) : (
+                  <span className="badge badge-blue">{e.percent_to_crypto}%</span>
+                )}
+              </td>
               <td className="text-xs text-gray-500 dark:text-slate-400 truncate max-w-xs">{e.receiving_addresses?.BTC || '—'}</td>
             </tr>
           ))}

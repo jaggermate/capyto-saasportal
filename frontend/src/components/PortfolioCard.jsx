@@ -1,7 +1,7 @@
 import React from 'react'
 import PieDistribution from './PieDistribution.jsx'
 
-export default function PortfolioCard({ custody=false, prices = {}, holdings = {} , fiat='USD'}) {
+export default function PortfolioCard({ custody=false, prices = {}, holdings = {} , fiat='CAD'}) {
   const symbols = Object.keys(prices)
   const total = symbols.reduce((sum, s) => sum + (holdings[s] || 0) * (prices[s] || 0), 0)
   return (

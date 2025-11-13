@@ -3,16 +3,7 @@ import Slider from '../components/Slider.jsx'
 import AddressForm from '../components/AddressForm.jsx'
 import MetricCard from '../components/MetricCard.jsx'
 import { getPrices, listEmployees, upsertEmployee, getSupported, listTransactions } from '../services/api.js'
-
-function resolveNetSalary(employee) {
-  const net = Number(employee?.net_salary || 0)
-  if (net > 0) return net
-  const gross = Number(employee?.gross_salary || 0)
-  if (gross > 0) {
-    return Number((gross * 0.82).toFixed(2))
-  }
-  return 0
-}
+import { getEmployeeTransactions, resolveNetSalary } from '../utils/employees.js'
 
 function LastPayday({ employee, fiat, prices, percent, split, convertMode='percent', fixedAmount=0 }) {
   const gross = Number(employee?.gross_salary || 0)
@@ -63,7 +54,7 @@ function LastPayday({ employee, fiat, prices, percent, split, convertMode='perce
   )
 }
 
-function UserInfoCard({ employee, fiat='USD' }) {
+function UserInfoCard({ employee, fiat='CAD' }) {
   if (!employee) return null
   const name = [employee.first_name, employee.last_name].filter(Boolean).join(' ').trim()
   const displayName = name || employee.user_id
@@ -109,7 +100,7 @@ export default function EmployeePage() {
   const [cryptoSplit, setCryptoSplit] = useState({})
   const [employees, setEmployees] = useState([])
   const [prices, setPrices] = useState({})
-  const [fiat, setFiat] = useState('USD')
+  const [fiat, setFiat] = useState('CAD')
   const [supported, setSupported] = useState({ cryptos: [], fiats: [] })
   const [addressesSaved, setAddressesSaved] = useState(false)
   const [addrValid, setAddrValid] = useState(true)
@@ -197,54 +188,7 @@ export default function EmployeePage() {
   const btcPrice = prices?.BTC || 0
 
   // Derive transactions assigned to this employee
-  const assignedTxs = useMemo(() => {
-    if (!employee) return []
-    const out = []
-    for (const t of txs) {
-      const sym = t.crypto_symbol
-      const breakdown = Array.isArray(t.per_employee_breakdown) ? t.per_employee_breakdown : []
-      const match = breakdown.find(item => item.user_id === employee.user_id)
-      if (match) {
-        const cryptoAmt = Number(match.crypto_amount || 0)
-        const fiatAmt = Number(match.fiat_amount || 0)
-        const currentRate = prices?.[sym] || 0
-        out.push({
-          id: t.id,
-          date: t.date,
-          status: t.status,
-          tx_hash: t.tx_hash,
-          fiat_currency: t.fiat_currency,
-          crypto_symbol: sym,
-          crypto_amount: cryptoAmt,
-          price_at_tx: t.price_at_tx,
-          value_at_tx: fiatAmt,
-          current_value: cryptoAmt * currentRate,
-        })
-        continue
-      }
-      const addr = employee?.receiving_addresses?.[sym]
-      if (!addr) continue
-      if (!Array.isArray(t.addresses) || t.addresses.length === 0) continue
-      if (!t.addresses.includes(addr)) continue
-      const perShare = t.crypto_amount / t.addresses.length
-      const valueAtTx = perShare * (t.price_at_tx || 0)
-      const currentRate = prices?.[sym] || 0
-      const currentValue = perShare * currentRate
-      out.push({
-        id: t.id,
-        date: t.date,
-        status: t.status,
-        tx_hash: t.tx_hash,
-        fiat_currency: t.fiat_currency,
-        crypto_symbol: sym,
-        crypto_amount: perShare,
-        price_at_tx: t.price_at_tx,
-        value_at_tx: valueAtTx,
-        current_value: currentValue,
-      })
-    }
-    return out
-  }, [employee?.user_id, employee?.receiving_addresses, txs, prices])
+  const assignedTxs = useMemo(() => getEmployeeTransactions(employee, txs, prices), [employee, txs, prices])
 
   // Compute average acquisition cost for BTC from assigned transactions
   const { btcAvgCost, btcAvgFiat } = useMemo(() => {

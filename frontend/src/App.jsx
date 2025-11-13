@@ -26,6 +26,7 @@ export default function App() {
           <nav className="flex items-center gap-6">
             {[
               { to: '/', label: 'Employee', end: true },
+              { to: '/employees', label: 'Employees' },
               { to: '/company', label: 'Company' },
               { to: '/transactions', label: 'Crypto transactions' },
             ].map(link => (

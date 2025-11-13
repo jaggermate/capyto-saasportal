@@ -1,6 +1,6 @@
 import React from 'react'
 
-export default function TransactionsTable({ items = [] }) {
+export default function TransactionsTable({ items = [], onSelect }) {
   return (
     <div className="card overflow-hidden">
       <table className="table">
@@ -16,7 +16,11 @@ export default function TransactionsTable({ items = [] }) {
         </thead>
         <tbody>
           {items.map(t => (
-            <tr key={t.id}>
+            <tr
+              key={t.id}
+              className={onSelect ? 'cursor-pointer hover:bg-blue-50/60 dark:hover:bg-slate-800/60' : undefined}
+              onClick={() => onSelect && onSelect(t)}
+            >
               <td>{new Date(t.date).toLocaleString()}</td>
               <td>{t.num_employees}</td>
               <td>{t.crypto_amount.toFixed(6)} {t.crypto_symbol} @ {t.price_at_tx.toFixed(2)} {t.fiat_currency}</td>

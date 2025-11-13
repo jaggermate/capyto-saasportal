@@ -33,7 +33,8 @@ TRANSACTIONS: List[dict] = []
 COMPANY_SETTINGS: dict = {
     "custody": False,  # False = pay to employee addresses; True = company custody
     "company_wallets": {"BTC": "", "ETH": "", "USDT": "", "USDC": ""},
-    "base_fiat": "USD",
+    "base_fiat": "CAD",
+    "company_benefit_amount": 0.0,
 }
 
 DB_DIR = Path(__file__).resolve().parent
@@ -220,7 +221,8 @@ class RunPayrollRequest(BaseModel):
 class CompanySettings(BaseModel):
     custody: bool
     company_wallets: Dict[str, Optional[str]]
-    base_fiat: str = "USD"
+    base_fiat: str = "CAD"
+    company_benefit_amount: float = 0.0
 
 
 @app.get("/health")
@@ -246,7 +248,8 @@ def update_company(settings: CompanySettings):
         {
             "custody": settings.custody,
             "company_wallets": wallet_map,
-            "base_fiat": settings.base_fiat if settings.base_fiat in FIAT_CURRENCIES else "USD",
+            "base_fiat": settings.base_fiat if settings.base_fiat in FIAT_CURRENCIES else "CAD",
+            "company_benefit_amount": max(0.0, float(settings.company_benefit_amount or 0.0)),
         }
     )
     return COMPANY_SETTINGS
@@ -380,7 +383,7 @@ def sync_one_user():
 
 
 @app.get("/prices")
-async def get_prices(fiat: str = "USD"):
+async def get_prices(fiat: str = "CAD"):
     prices = await fetch_prices(fiat)
     return {"fiat": fiat, "prices": prices}
 
@@ -390,16 +393,16 @@ async def run_payroll(req: RunPayrollRequest):
     if req.crypto_symbol not in SUPPORTED_CRYPTOS:
         raise HTTPException(status_code=400, detail="Unsupported crypto symbol")
 
-    prices = await fetch_prices(COMPANY_SETTINGS.get("base_fiat", "USD"))
+    prices = await fetch_prices(COMPANY_SETTINGS.get("base_fiat", "CAD"))
     price = prices.get(req.crypto_symbol)
     if not price:
         raise HTTPException(status_code=502, detail="Price not available")
 
     custody_mode = bool(COMPANY_SETTINGS.get("custody"))
+    company_wallet = COMPANY_SETTINGS.get("company_wallets", {}).get(req.crypto_symbol)
 
     if custody_mode:
-        wallet = COMPANY_SETTINGS.get("company_wallets", {}).get(req.crypto_symbol)
-        if not wallet:
+        if not company_wallet:
             raise HTTPException(status_code=400, detail="Company custody enabled but wallet missing")
 
     per_employee_breakdown: List[dict] = []
@@ -417,6 +420,20 @@ async def run_payroll(req: RunPayrollRequest):
                 continue
             entry["address"] = addr
         per_employee_breakdown.append(entry)
+
+    company_benefit_amount = float(COMPANY_SETTINGS.get("company_benefit_amount") or 0.0)
+    if company_benefit_amount > 0:
+        if not company_wallet:
+            raise HTTPException(status_code=400, detail="Company benefit enabled but wallet missing for selected crypto")
+        benefit_entry = {
+            "user_id": "__company__",
+            "fiat_amount": round(company_benefit_amount, 2),
+            "is_company": True,
+        }
+        if not custody_mode:
+            benefit_entry["address"] = company_wallet
+        benefit_entry["crypto_amount"] = round(benefit_entry["fiat_amount"] / price, 12)
+        per_employee_breakdown.append(benefit_entry)
 
     if not per_employee_breakdown:
         detail = "No employee requests found for this crypto"
@@ -436,7 +453,7 @@ async def run_payroll(req: RunPayrollRequest):
 
     crypto_amount = payroll_fiat_total / price
     if custody_mode:
-        addresses = [wallet]
+        addresses = [company_wallet]
     else:
         addresses = [item["address"] for item in per_employee_breakdown]
         if not addresses:
@@ -454,10 +471,10 @@ async def run_payroll(req: RunPayrollRequest):
         id=str(uuid.uuid4()),
         date=datetime.utcnow(),
         fiat_amount=payroll_fiat_total,
-        fiat_currency=COMPANY_SETTINGS.get("base_fiat", "USD"),
+        fiat_currency=COMPANY_SETTINGS.get("base_fiat", "CAD"),
         crypto_symbol=req.crypto_symbol,
         crypto_amount=crypto_amount,
-        num_employees=len(per_employee_breakdown),
+        num_employees=sum(1 for item in per_employee_breakdown if item.get("user_id") != "__company__"),
         addresses=addresses,
         tx_hash=tx_hash,
         status="pending",
@@ -491,7 +508,7 @@ def confirm_transaction(tx_id: str):
     raise HTTPException(status_code=404, detail="Transaction not found")
 
 
-async def fetch_prices(fiat: str = "USD") -> Dict[str, float]:
+async def fetch_prices(fiat: str = "CAD") -> Dict[str, float]:
     """Fetch live prices.
 
     Priority order:

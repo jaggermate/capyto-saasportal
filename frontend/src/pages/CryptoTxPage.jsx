@@ -5,7 +5,7 @@ import { getCompany, getPrices, listEmployees, listTransactions } from '../servi
 
 export default function CryptoTxPage() {
   const [txs, setTxs] = useState([])
-  const [company, setCompany] = useState({ custody: false, company_wallets: {}, base_fiat: 'USD' })
+  const [company, setCompany] = useState({ custody: false, company_wallets: {}, base_fiat: 'CAD' })
   const [prices, setPrices] = useState({})
   const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(true)
