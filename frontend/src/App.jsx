@@ -22,7 +22,12 @@ export default function App() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-950">
       <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:supports-[backdrop-filter]:bg-slate-900/60 border-b border-gray-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="text-xl font-semibold">Crypto Payroll</div>
+          <NavLink to="/" className="flex items-center gap-2 text-xl font-semibold text-slate-900 dark:text-white">
+            <span className="bg-slate-900 rounded-md p-1 dark:bg-transparent">
+              <img src="/valeox-white.png" alt="ValeoX logo" className="h-6 w-auto" />
+            </span>
+            <span>Payroll</span>
+          </NavLink>
           <nav className="flex items-center gap-6">
             {[
               { to: '/', label: 'Employee', end: true },

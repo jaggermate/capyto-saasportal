@@ -42,6 +42,13 @@ COMPANY_SETTINGS: dict = {
         "routing_number_or_iban": "",
         "bank_country": "",
     },
+    # New: external HR/payroll integrations configuration
+    "integrations": {
+        "provider": None,  # one of: None, "nethris", "employeurd", "workday"
+        "nethris": {"api_key": ""},
+        "employeurd": {"api_key": ""},
+        "workday": {"tenant": "", "client_id": "", "client_secret": ""},
+    },
 }
 
 DB_DIR = Path(__file__).resolve().parent
@@ -233,12 +240,34 @@ class BankingInfo(BaseModel):
     bank_country: Optional[str] = ""
 
 
+class NethrisIntegration(BaseModel):
+    api_key: Optional[str] = ""
+
+
+class EmployeurDIntegration(BaseModel):
+    api_key: Optional[str] = ""
+
+
+class WorkdayIntegration(BaseModel):
+    tenant: Optional[str] = ""
+    client_id: Optional[str] = ""
+    client_secret: Optional[str] = ""
+
+
+class Integrations(BaseModel):
+    provider: Optional[Literal['nethris', 'employeurd', 'workday']] = None
+    nethris: NethrisIntegration = Field(default_factory=NethrisIntegration)
+    employeurd: EmployeurDIntegration = Field(default_factory=EmployeurDIntegration)
+    workday: WorkdayIntegration = Field(default_factory=WorkdayIntegration)
+
+
 class CompanySettings(BaseModel):
     custody: bool
     company_wallets: Dict[str, Optional[str]]
     base_fiat: str = "CAD"
     company_benefit_amount: float = 0.0
     banking: BankingInfo = Field(default_factory=BankingInfo)
+    integrations: Integrations = Field(default_factory=Integrations)
 
 
 @app.get("/health")
@@ -262,6 +291,12 @@ def update_company(settings: CompanySettings):
     wallet_map = {s: settings.company_wallets.get(s) for s in SUPPORTED_CRYPTOS}
     # banking info as plain dict
     banking = settings.banking.model_dump() if hasattr(settings, "banking") and settings.banking else {}
+    # integrations info as plain dict
+    integrations = (
+        settings.integrations.model_dump()
+        if hasattr(settings, "integrations") and settings.integrations
+        else {}
+    )
     COMPANY_SETTINGS.update(
         {
             "custody": settings.custody,
@@ -269,6 +304,7 @@ def update_company(settings: CompanySettings):
             "base_fiat": settings.base_fiat if settings.base_fiat in FIAT_CURRENCIES else "CAD",
             "company_benefit_amount": max(0.0, float(settings.company_benefit_amount or 0.0)),
             "banking": {**COMPANY_SETTINGS.get("banking", {}), **banking},
+            "integrations": {**COMPANY_SETTINGS.get("integrations", {}), **integrations},
         }
     )
     return COMPANY_SETTINGS

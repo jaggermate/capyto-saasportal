@@ -8,6 +8,7 @@ export default function SettingsPage() {
     base_fiat: 'CAD',
     company_benefit_amount: 0,
     banking: { bank_name: '', account_name: '', account_number: '', routing_number_or_iban: '', bank_country: '' },
+    integrations: { provider: null, nethris: { api_key: '' }, employeurd: { api_key: '' }, workday: { tenant: '', client_id: '', client_secret: '' } },
   })
   const [supported, setSupported] = useState({ cryptos: [], fiats: [] })
   const [saving, setSaving] = useState(false)
@@ -32,6 +33,7 @@ export default function SettingsPage() {
       ...c,
       company_benefit_amount: c?.company_benefit_amount ?? 0,
       banking: c?.banking ?? { bank_name: '', account_name: '', account_number: '', routing_number_or_iban: '', bank_country: '' },
+      integrations: c?.integrations ?? { provider: null, nethris: { api_key: '' }, employeurd: { api_key: '' }, workday: { tenant: '', client_id: '', client_secret: '' } },
     })
     setLoading(false)
   }
@@ -50,8 +52,8 @@ export default function SettingsPage() {
         <p className="text-sm text-gray-600 dark:text-slate-400">Configure your company defaults, custody mode, and treasury wallets.</p>
       </section>
 
-      <div className="card p-6 space-y-6">
-        <section className="space-y-3">
+      <div className="space-y-6">
+        <section className="card p-6 space-y-3">
           <h2 className="subtitle">General</h2>
           <div className="grid md:grid-cols-2 gap-4">
             <div>
@@ -70,7 +72,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="space-y-3">
+        <section className="card p-6 space-y-3">
           <h2 className="subtitle">Company wallets</h2>
           <p className="text-xs text-gray-500 dark:text-slate-400">Used when custody is enabled. Optional otherwise.</p>
           <div className="grid md:grid-cols-2 gap-3">
@@ -83,7 +85,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="space-y-3">
+        <section className="card p-6 space-y-3">
           <h2 className="subtitle">Banking information</h2>
           <p className="text-xs text-gray-500 dark:text-slate-400">Used for fiat funding and refunds. Stored securely and not shared with employees.</p>
           <div className="grid md:grid-cols-2 gap-3">
@@ -135,7 +137,83 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="space-y-3">
+        <section className="card p-6 space-y-3">
+          <h2 className="subtitle">Integrations</h2>
+          <p className="text-xs text-gray-500 dark:text-slate-400">Connect your HR/payroll system to sync employees automatically.</p>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <div className="label">Provider</div>
+              <select
+                className="input"
+                value={company.integrations?.provider ?? ''}
+                onChange={e => {
+                  const provider = e.target.value || null
+                  setCompany(prev => ({ ...prev, integrations: { ...prev.integrations, provider } }))
+                }}
+              >
+                <option value="">None</option>
+                <option value="nethris">Nethris</option>
+                <option value="employeurd">EmployeurD</option>
+                <option value="workday">Workday</option>
+              </select>
+            </div>
+            {company.integrations?.provider === 'nethris' && (
+              <div>
+                <div className="label">Nethris API key</div>
+                <input
+                  className="input"
+                  placeholder="Enter Nethris API key"
+                  value={company.integrations?.nethris?.api_key || ''}
+                  onChange={e => setCompany(prev => ({ ...prev, integrations: { ...prev.integrations, nethris: { ...(prev.integrations?.nethris||{}), api_key: e.target.value } } }))}
+                />
+              </div>
+            )}
+            {company.integrations?.provider === 'employeurd' && (
+              <div>
+                <div className="label">EmployeurD API key</div>
+                <input
+                  className="input"
+                  placeholder="Enter EmployeurD API key"
+                  value={company.integrations?.employeurd?.api_key || ''}
+                  onChange={e => setCompany(prev => ({ ...prev, integrations: { ...prev.integrations, employeurd: { ...(prev.integrations?.employeurd||{}), api_key: e.target.value } } }))}
+                />
+              </div>
+            )}
+            {company.integrations?.provider === 'workday' && (
+              <>
+                <div>
+                  <div className="label">Workday tenant</div>
+                  <input
+                    className="input"
+                    placeholder="Tenant"
+                    value={company.integrations?.workday?.tenant || ''}
+                    onChange={e => setCompany(prev => ({ ...prev, integrations: { ...prev.integrations, workday: { ...(prev.integrations?.workday||{}), tenant: e.target.value } } }))}
+                  />
+                </div>
+                <div>
+                  <div className="label">Workday client ID</div>
+                  <input
+                    className="input"
+                    placeholder="Client ID"
+                    value={company.integrations?.workday?.client_id || ''}
+                    onChange={e => setCompany(prev => ({ ...prev, integrations: { ...prev.integrations, workday: { ...(prev.integrations?.workday||{}), client_id: e.target.value } } }))}
+                  />
+                </div>
+                <div>
+                  <div className="label">Workday client secret</div>
+                  <input
+                    className="input"
+                    placeholder="Client secret"
+                    value={company.integrations?.workday?.client_secret || ''}
+                    onChange={e => setCompany(prev => ({ ...prev, integrations: { ...prev.integrations, workday: { ...(prev.integrations?.workday||{}), client_secret: e.target.value } } }))}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
+        <section className="card p-6 space-y-3">
           <h2 className="subtitle">Company contribution</h2>
           <div>
             <div className="label">Company benefit per payroll ({company.base_fiat})</div>
