@@ -17,6 +17,8 @@ export default function PortfolioCard({ custody=false, prices = {}, holdings = {
         <div className="md:col-span-2">
           <PieDistribution holdings={holdings} />
         </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3">
         {symbols.map(s => (
           <div key={s} className="p-3 rounded border border-gray-200 dark:border-slate-700 text-sm hover:bg-gray-50/60 dark:hover:bg-slate-800/40 transition-colors">
             <div className="text-gray-600 dark:text-slate-300">{s}</div>
