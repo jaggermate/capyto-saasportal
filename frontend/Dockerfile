@@ -5,8 +5,8 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 # Install dependencies first (better caching)
-COPY ./package*.json ./
-RUN npm i
+COPY ./frontend/package*.json ./
+RUN npm ci
 
 # Copy source and build
 COPY ./ .
