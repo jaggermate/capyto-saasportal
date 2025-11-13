@@ -1,6 +1,14 @@
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const envBase = import.meta.env.VITE_API_BASE?.trim()
+const resolvedBase =
+  typeof window !== 'undefined'
+    ? window.location.origin.includes('localhost')
+      ? 'http://localhost:8000'
+      : `${window.location.origin}/api`
+    : 'http://localhost:8000'
+
+const API_BASE = envBase || resolvedBase
 
 export const api = axios.create({
   baseURL: API_BASE,
